@@ -235,3 +235,25 @@ test('an oversized body is rejected as 413 before it is parsed', async () => {
   assert.equal(res.status, 413);
   assert.equal((await res.json()).error, 'payload_too_large');
 });
+
+test('sourcesUsed reports what reached the model, not what was selected', async () => {
+  // If the budget drops context, claiming it as a source would be a lie.
+  const app = buildApp(
+    loadConfig({ LOG_LEVEL: 'error', PROMPT_CONTEXT_TOKEN_BUDGET: '40' }),
+    { logger: silent, llm: new CountingProvider(), fetchImpl: fakeFetch },
+  );
+  const s = http.createServer(app.handler);
+  await new Promise((r) => s.listen(0, r));
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'user_101', question: 'What should I prioritize this week?' }),
+    });
+    const json = await res.json();
+    // debug shows the full selection; the answer reports only what was sent
+    const dbg = (await post('/debug/personalization', { userId: 'user_101', question: 'What should I prioritize this week?' })).json;
+    assert.equal(dbg.selectedContext.length, 11);
+    assert.ok(json.sourcesUsed.length < 11, 'budget applied');
+    assert.ok(json.sourcesUsed.every((l) => dbg.selectedContext.includes(l)));
+  } finally { s.close(); }
+});

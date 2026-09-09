@@ -68,7 +68,9 @@ export function buildApp(config = loadConfig(), deps = {}) {
     fetchImpl: deps.fetchImpl,
   });
   const llm = deps.llm ?? createProvider(config, logger);
-  const service = new PersonalizeService({ upstream, llm, logger });
+  const service = new PersonalizeService({
+    upstream, llm, logger, contextTokenBudget: config.promptContextTokenBudget,
+  });
 
   const routes = {
     'POST /personalize': async ({ body, log }) => ({

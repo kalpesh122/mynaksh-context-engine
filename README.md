@@ -24,8 +24,36 @@ In a second terminal:
 
 ```bash
 npm run demo       # walks all the brief's sample questions through both endpoints
-npm test           # 65 tests
+npm test           # 69 tests
+npm run eval       # scores context selection against a golden set
 ```
+
+### Measuring context selection, not just testing it
+
+Unit tests answer "does the code do what I wrote". They do not answer *"is the
+context selection any good"* — which is the question this assignment is about.
+`npm run eval` scores `buildPlan()` against a golden set of questions with the
+intent and sources a correct system must produce:
+
+```
+  intent accuracy        100.0%  (14/14)
+  required-source recall 100.0%  (12/12)
+  exclusion leaks        0   <- must be 0
+```
+
+It runs offline — no server, no LLM, no network — because context selection is a
+pure function of (question, config, available services). An exclusion leak is a
+hard failure, not a near miss: excluded context reaching the model is the
+specific mistake this layer exists to prevent.
+
+**It earned its place on the first run.** It caught that *"I keep falling ill"*
+fell through to `general`, and because `general` declares no exclusions, that
+fallback leaked Finance Horoscope into a health question. The fallback was the
+most permissive route in the system — the opposite of what a fallback should be.
+Fixed: `general` is now the answer for *no* signal, not for *weak* signal. A
+clear winner with any signal routes to that intent and reports low decisiveness
+(so confidence drops); only a genuine tie widens. See
+`src/core/intent-classifier.js`.
 
 ### Try it by hand
 
@@ -232,16 +260,13 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
    request instead of adding latency to answers that will degrade anyway. There
    is already an overall deadline across the fan-out; what is missing is
    per-service budgets and failure memory.
-4. **A prompt-size budget with graceful truncation.** `general` currently sends
-   all 11 context items; at real scale that wants a token budget that drops
-   secondary context first (the plan already orders primary before secondary
-   for exactly this reason).
+4. **Grow the eval set and run it in CI.** Fourteen cases is enough to catch
+   regressions, not enough to trust a weight change. This wants a few hundred
+   real questions, and per-intent breakdowns so a fix for health cannot quietly
+   cost finance.
 5. **Golden-file tests over prompts**, so a change to context selection shows up
    as a reviewable prompt diff rather than a silently different answer.
-6. **Structured evals.** A fixture set of questions with expected intent and
-   expected sources, run in CI — the only way to change classifier weights
-   without regressing routing.
-7. **Real observability** — OpenTelemetry spans across the fan-out, and metrics
+6. **Real observability** — OpenTelemetry spans across the fan-out, and metrics
    for cache hit rate, per-intent confidence distribution, and degraded-answer
    rate. Degraded-answer rate is the number I would actually alert on.
 
@@ -298,10 +323,13 @@ src/
     logger.js                    JSON-line structured logging
   http/
     router.js                    routing, body limits, error mapping
+evals/
+  dataset.js                     golden set: question -> expected intent + sources
+  run.js                         scores selection; non-zero exit on regression
 mocks/
   upstream-server.js             the four backend services, with fault injection
   fixtures.js                    sample users/kundlis/horoscopes
-test/                            65 tests
+test/                            69 tests
 ```
 
 ## Logging

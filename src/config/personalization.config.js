@@ -47,9 +47,9 @@ export const INTENTS = Object.freeze({
     id: 'health',
     description: 'Physical and mental wellbeing, energy, illness, recovery.',
     match: {
-      phrases: ['my health', 'feeling tired', 'take care of myself'],
-      strong: ['health', 'illness', 'fitness', 'wellbeing', 'wellness', 'anxiety'],
-      any: ['sick', 'energy', 'sleep', 'stress', 'body', 'recovery', 'diet'],
+      phrases: ['my health', 'feeling tired', 'take care of myself', 'falling ill', 'keep falling'],
+      strong: ['health', 'illness', 'ill', 'unwell', 'fitness', 'wellbeing', 'wellness', 'anxiety', 'fever'],
+      any: ['sick', 'energy', 'sleep', 'stress', 'body', 'recovery', 'diet', 'pain', 'tired', 'weak'],
       negative: [],
     },
     primary: ['house_6', 'health_horoscope'],

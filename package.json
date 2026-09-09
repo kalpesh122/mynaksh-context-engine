@@ -1,15 +1,18 @@
 {
   "name": "mynaksh-context-engine",
   "version": "1.0.0",
-  "description": "Personalized AI Context Engine — the intelligence layer between MyNaksh's backend services and the LLM.",
+  "description": "Personalized AI Context Engine \u2014 the intelligence layer between MyNaksh's backend services and the LLM.",
   "type": "module",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "start": "node src/main.js",
     "start:app": "node src/server.js",
     "start:upstream": "node mocks/upstream-server.js",
     "test": "node --test test/*.test.js",
-    "demo": "node scripts/demo.js"
+    "demo": "node scripts/demo.js",
+    "eval": "node evals/run.js"
   },
   "dependencies": {},
   "devDependencies": {},

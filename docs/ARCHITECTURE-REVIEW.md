@@ -147,6 +147,36 @@ be the project's only runtime dependency, for validation that is currently six
 lines and fully tested. The moment the request body grows past a handful of
 fields, that trade flips.
 
+## What was added, and why it is architecture rather than features
+
+**An eval harness (`evals/`).** The assignment is about how context is selected,
+so selection needed to be *measured*, not just tested. Unit tests assert that
+the code does what was written; the eval asserts that what was written is any
+good. It scores intent accuracy, required-source recall and exclusion leaks
+against a golden set, offline, and fails the build on a regression.
+
+This is the addition that changed the design. On its first run it revealed that
+`general` — the fallback — declares no exclusions, so *any* question falling
+back to it received every context item, including ones a narrower intent would
+have deliberately withheld. A health question was answered with finance guidance
+attached. The most permissive route in the system was the one taken when the
+system was least sure.
+
+The fix is a routing rule, not a keyword patch: `general` is for *no* signal, not
+*weak* signal. A clear winner with any signal at all routes to that intent and
+reports low decisiveness, so confidence drops to MEDIUM and the caller can see
+the system was unsure. Only a genuine tie widens.
+
+**A prompt-context budget.** `general` expands to every registered context, so
+the cost of the broadest question grew every time someone added a source.
+`fitToBudget()` drops from the end of the selection — and because `buildPlan`
+orders primary before secondary, "drop the last" means "drop the least
+important". The ordering was already there for this; it now pays off.
+
+One consequence worth stating: `sourcesUsed` reports what actually reached the
+model, not what was selected. Claiming a source the budget dropped would make
+the API response untrue.
+
 ## Where this would strain first
 
 In rough order:
@@ -158,8 +188,8 @@ In rough order:
    against a normalised question hash so `/debug` stays free.
 2. **Cache is unbounded and per-instance.** Single-flight is in; an LRU bound
    and a shared store are not. At N instances you do N times the upstream work.
-3. **`general` sends all 11 context items.** There is no prompt-size budget —
-   size is logged, not enforced. The plan already orders primary before
-   secondary precisely so truncation can degrade sensibly when it is added.
+3. **The eval set is 14 cases.** Enough to catch regressions, not enough to
+   trust a weight change. Per-intent breakdowns would stop a fix for health
+   quietly costing finance.
 4. **No circuit breaker.** A persistently failing service is retried on every
    request, adding latency to answers that will degrade anyway.

@@ -72,13 +72,28 @@ export function classify(question, config) {
   const [topId, topScore] = ranked[0] ?? [DEFAULT_INTENT, 0];
   const runnerUp = ranked[1]?.[1] ?? 0;
 
-  if (topScore < W.minScoreForIntent) {
+  /**
+   * `general` is the answer for NO signal, not for weak signal.
+   *
+   * It used to catch anything scoring below the threshold — but `general` has an
+   * empty exclude list, so falling back to it silently disables every exclusion
+   * the config declares. A health question that scored 1 was answered with
+   * finance guidance attached. The fallback was the most permissive route in the
+   * system, which is the opposite of what a fallback should be.
+   *
+   * So: a clear winner with any signal at all routes to that intent, marked
+   * non-decisive so confidence drops to MEDIUM. Only a genuine tie, or no
+   * signal whatsoever, widens to `general`.
+   */
+  const hasSignal = topScore > 0;
+  const clearWinner = topScore > runnerUp;
+  if (!hasSignal || !clearWinner) {
     return { intent: DEFAULT_INTENT, score: topScore, decisive: false, matched: [], scores };
   }
   return {
     intent: topId,
     score: topScore,
-    decisive: topScore - runnerUp >= W.decisiveMargin,
+    decisive: topScore >= W.minScoreForIntent && topScore - runnerUp >= W.decisiveMargin,
     matched: matchedByIntent[topId] ?? [],
     scores,
   };

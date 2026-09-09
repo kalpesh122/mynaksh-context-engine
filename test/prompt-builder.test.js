@@ -58,3 +58,32 @@ test('system prompt forbids inventing placements', () => {
 test('token estimate is reported for prompt-size logging', () => {
   assert.equal(estimateTokens('a'.repeat(400)), 100);
 });
+
+test('a token budget drops the LEAST important context first', () => {
+  // buildPlan orders primary before secondary; the budget relies on that.
+  const plan = buildPlan({ question: 'What should I prioritize this week?', user: USERS.user_101, services: services() });
+  assert.equal(plan.intent, 'general');
+  assert.equal(plan.selectedContext.length, 11);
+
+  const { includedContext, droppedContext } = buildPrompt({
+    question: 'q', plan, user: USERS.user_101, contextTokenBudget: 40,
+  });
+
+  assert.ok(includedContext.length < 11, 'budget must bite');
+  assert.equal(includedContext.length + droppedContext.length, 11, 'nothing vanishes silently');
+  // kept items are a prefix of the ordered selection
+  assert.deepEqual(includedContext, plan.selectedContextLabels.slice(0, includedContext.length));
+});
+
+test('the budget never empties the prompt entirely', () => {
+  const plan = buildPlan({ question: 'Should I change my job?', user: USERS.user_101, services: services() });
+  const { includedContext } = buildPrompt({ question: 'q', plan, user: USERS.user_101, contextTokenBudget: 1 });
+  assert.equal(includedContext.length, 1, 'one item is always kept; emptiness is refused upstream, not here');
+});
+
+test('an unbounded budget keeps everything', () => {
+  const plan = buildPlan({ question: 'What should I prioritize this week?', user: USERS.user_101, services: services() });
+  const { includedContext, droppedContext } = buildPrompt({ question: 'q', plan, user: USERS.user_101 });
+  assert.equal(includedContext.length, 11);
+  assert.deepEqual(droppedContext, []);
+});

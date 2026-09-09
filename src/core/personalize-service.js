@@ -18,10 +18,11 @@ function httpError(statusCode, message, details) {
 }
 
 export class PersonalizeService {
-  constructor({ upstream, llm, logger }) {
+  constructor({ upstream, llm, logger, contextTokenBudget = Infinity }) {
     this.upstream = upstream;
     this.llm = llm;
     this.logger = logger;
+    this.contextTokenBudget = contextTokenBudget;
   }
 
   /** Everything up to (but not including) the LLM call. */
@@ -60,11 +61,16 @@ export class PersonalizeService {
         { stage: 'context', failedServices: plan.failedServices, llmInvoked: false });
     }
 
-    const prompt = buildPrompt({ question: input.question, plan, user: services.user });
+    const prompt = buildPrompt({
+      question: input.question, plan, user: services.user,
+      contextTokenBudget: this.contextTokenBudget,
+    });
     log.info('prompt.built', {
       intent: plan.intent, promptChars: prompt.promptChars,
       estimatedTokens: prompt.estimatedTokens,
-      contextItems: plan.selectedContext.length, maxWords: plan.maxWords,
+      contextItems: prompt.includedContext.length,
+      droppedForBudget: prompt.droppedContext,
+      maxWords: plan.maxWords,
     });
 
     const t0 = performance.now();
@@ -84,7 +90,9 @@ export class PersonalizeService {
     return {
       answer: completion.text,
       confidence: plan.confidence,
-      sourcesUsed: plan.selectedContextLabels,
+      // What actually reached the model, not what was selected — if the budget
+      // dropped something, claiming it as a source would be a lie.
+      sourcesUsed: prompt.includedContext,
       meta: {
         intent: plan.intent,
         coverage: plan.coverage,

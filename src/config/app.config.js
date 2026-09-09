@@ -24,6 +24,13 @@ export function loadConfig(env = process.env) {
     /** Ceiling on the whole upstream fan-out, not one attempt. */
     upstreamDeadlineMs: num(env.UPSTREAM_DEADLINE_MS, 2500),
 
+    /**
+     * Ceiling on context tokens in a single prompt. `general` widens to every
+     * registered context, which grows with the registry — without a budget the
+     * cost of the broadest question rises every time someone adds a source.
+     */
+    promptContextTokenBudget: num(env.PROMPT_CONTEXT_TOKEN_BUDGET, 400),
+
     llmProvider: env.LLM_PROVIDER ?? 'mock',
     llmTimeoutMs: num(env.LLM_TIMEOUT_MS, 15_000),
     openaiApiKey: env.OPENAI_API_KEY ?? '',
