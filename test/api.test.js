@@ -116,14 +116,15 @@ test('an LLM failure degrades to 503, not a raw 500', async () => {
   const app = buildApp(loadConfig({ LOG_LEVEL: 'error' }), { logger: silent, llm: failing, fetchImpl: fakeFetch });
   const s = http.createServer(app.handler);
   await new Promise((r) => s.listen(0, r));
-  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: 'user_101', question: 'my job' }),
-  });
-  assert.equal(res.status, 503);
-  const json = await res.json();
-  assert.equal(json.details.stage, 'llm');
-  s.close();
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'user_101', question: 'my job' }),
+    });
+    assert.equal(res.status, 503);
+    const json = await res.json();
+    assert.equal(json.details.stage, 'llm');
+  } finally { s.close(); }
 });
 
 // --- behaviours found during adversarial review -----------------------------
@@ -140,15 +141,15 @@ test('an unknown user is 404, not a confident answer built from global context',
     { logger: silent, llm: new CountingProvider(), fetchImpl: notFound });
   const s = http.createServer(app.handler);
   await new Promise((r) => s.listen(0, r));
-
-  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: 'ghost_999', question: 'my career' }),
-  });
-  assert.equal(res.status, 404);
-  const json = await res.json();
-  assert.equal(json.error, 'not_found');
-  s.close();
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'ghost_999', question: 'my career' }),
+    });
+    assert.equal(res.status, 404);
+    const json = await res.json();
+    assert.equal(json.error, 'not_found');
+  } finally { s.close(); }
 });
 
 test('a user service that is DOWN still degrades to an answer (not a 404)', async () => {
@@ -164,16 +165,16 @@ test('a user service that is DOWN still degrades to an answer (not a 404)', asyn
     { logger: silent, llm: new CountingProvider(), fetchImpl: userDown });
   const s = http.createServer(app.handler);
   await new Promise((r) => s.listen(0, r));
-
-  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: 'user_101', question: 'Should I change my job?' }),
-  });
-  assert.equal(res.status, 200);
-  const json = await res.json();
-  assert.equal(json.meta.personalized, false, 'must report that shaping fell back to defaults');
-  assert.ok(json.sourcesUsed.length > 0);
-  s.close();
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'user_101', question: 'Should I change my job?' }),
+    });
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.meta.personalized, false, 'must report that shaping fell back to defaults');
+    assert.ok(json.sourcesUsed.length > 0);
+  } finally { s.close(); }
 });
 
 test('zero grounding refuses with 503 and never calls the model', async () => {
@@ -183,17 +184,17 @@ test('zero grounding refuses with 503 and never calls the model', async () => {
     { logger: silent, llm: llm2, fetchImpl: allDown });
   const s = http.createServer(app.handler);
   await new Promise((r) => s.listen(0, r));
-
-  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userId: 'user_101', question: 'my career' }),
-  });
-  assert.equal(res.status, 503);
-  const json = await res.json();
-  assert.equal(json.error, 'service_unavailable', '503 must not be labelled internal_error');
-  assert.equal(json.details.llmInvoked, false);
-  assert.equal(llm2.calls, 0, 'must not pay for an ungrounded completion');
-  s.close();
+  try {
+    const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: 'user_101', question: 'my career' }),
+    });
+    assert.equal(res.status, 503);
+    const json = await res.json();
+    assert.equal(json.error, 'service_unavailable', '503 must not be labelled internal_error');
+    assert.equal(json.details.llmInvoked, false);
+    assert.equal(llm2.calls, 0, 'must not pay for an ungrounded completion');
+  } finally { s.close(); }
 });
 
 test('malformed userId is rejected at the edge, not passed upstream', async () => {

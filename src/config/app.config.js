@@ -21,6 +21,8 @@ export function loadConfig(env = process.env) {
     upstreamPort: num(env.UPSTREAM_PORT, 4001),
     upstreamTimeoutMs: num(env.UPSTREAM_TIMEOUT_MS, 800),
     upstreamRetries: num(env.UPSTREAM_RETRIES, 2),
+    /** Ceiling on the whole upstream fan-out, not one attempt. */
+    upstreamDeadlineMs: num(env.UPSTREAM_DEADLINE_MS, 2500),
 
     llmProvider: env.LLM_PROVIDER ?? 'mock',
     llmTimeoutMs: num(env.LLM_TIMEOUT_MS, 15_000),

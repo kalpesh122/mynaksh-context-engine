@@ -58,6 +58,7 @@ export function buildApp(config = loadConfig(), deps = {}) {
     baseUrl: config.upstreamBaseUrl,
     timeoutMs: config.upstreamTimeoutMs,
     retries: config.upstreamRetries,
+    deadlineMs: config.upstreamDeadlineMs,
     cache, logger,
     fetchImpl: deps.fetchImpl,
   });
@@ -99,9 +100,31 @@ export function buildApp(config = loadConfig(), deps = {}) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
   const app = buildApp(config);
-  http.createServer(app.handler).listen(config.port, () => {
+  const server = http.createServer(app.handler);
+
+  server.listen(config.port, () => {
     app.logger.info('server.listening', {
       port: config.port, provider: app.llm.name, upstream: config.upstreamBaseUrl,
     });
   });
+
+  /**
+   * Drain in-flight requests before exiting. Without this, SIGTERM during a
+   * deploy cuts responses mid-flight and the caller sees a connection reset
+   * rather than an answer they already paid for.
+   */
+  let closing = false;
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => {
+      if (closing) return;
+      closing = true;
+      app.logger.info('server.shutdown', { signal });
+      server.close(() => {
+        app.logger.info('server.closed', {});
+        process.exit(0);
+      });
+      // Do not hang forever on a wedged keep-alive connection.
+      setTimeout(() => process.exit(0), 5000).unref();
+    });
+  }
 }

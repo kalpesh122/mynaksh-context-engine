@@ -38,18 +38,27 @@ export class UpstreamClient {
    * @param {object} opts.logger
    * @param {typeof fetch} [opts.fetchImpl] injectable for tests
    */
-  constructor({ baseUrl, timeoutMs, retries, cache, logger, fetchImpl = fetch }) {
+  constructor({ baseUrl, timeoutMs, retries, deadlineMs, cache, logger, fetchImpl = fetch }) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.timeoutMs = timeoutMs;
     this.retries = retries;
+    /**
+     * Ceiling on the WHOLE fan-out, not just one attempt. Without it, a service
+     * that fails slowly costs timeout x (1+retries) + backoff — ~2.5s at the
+     * defaults — and the caller has no bound at all. Retries stop once the
+     * deadline has passed, so a degraded upstream cannot hold the request open.
+     */
+    this.deadlineMs = deadlineMs ?? timeoutMs * (retries + 1) + 500;
     this.cache = cache;
     this.logger = logger;
     this.fetchImpl = fetchImpl;
   }
 
-  async #attempt(path) {
+  async #attempt(path, deadline) {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), this.timeoutMs);
+    // Never wait past the overall deadline, even if the per-attempt budget is larger.
+    const budget = Math.max(1, Math.min(this.timeoutMs, deadline - Date.now()));
+    const timer = setTimeout(() => ac.abort(), budget);
     try {
       const res = await this.fetchImpl(`${this.baseUrl}${path}`, { signal: ac.signal });
       if (!res.ok) {
@@ -64,15 +73,16 @@ export class UpstreamClient {
     }
   }
 
-  async #withRetries(service, path) {
+  async #withRetries(service, path, deadline) {
     let lastErr;
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       try {
-        return await this.#attempt(path);
+        return await this.#attempt(path, deadline);
       } catch (err) {
         lastErr = err;
         const retryable = err.retryable !== false; // aborts and network errors are retryable
-        if (!retryable || attempt === this.retries) break;
+        const timeLeft = deadline - Date.now();
+        if (!retryable || attempt === this.retries || timeLeft <= 0) break;
         // Full jitter backoff: 50ms, 100ms, ... randomised to avoid lock-step retries.
         const backoff = Math.random() * 50 * 2 ** attempt;
         await new Promise((r) => setTimeout(r, backoff));
@@ -81,10 +91,10 @@ export class UpstreamClient {
     throw new UpstreamError(service, lastErr?.message ?? 'unknown', lastErr?.status);
   }
 
-  #fetchCached(service, cacheKey, path, log) {
+  #fetchCached(service, cacheKey, path, log, deadline) {
     return this.cache.wrap(service, cacheKey, async () => {
       const started = performance.now();
-      const data = await this.#withRetries(service, path);
+      const data = await this.#withRetries(service, path, deadline);
       log.debug('upstream.fetched', { service, latencyMs: Math.round(performance.now() - started) });
       return data;
     });
@@ -103,10 +113,11 @@ export class UpstreamClient {
     ];
 
     const started = performance.now();
+    const deadline = Date.now() + this.deadlineMs;
     const settled = await Promise.allSettled(
       jobs.map(async ([service, key, path]) => {
         const t0 = performance.now();
-        const { value, cached } = await this.#fetchCached(service, key, path, log);
+        const { value, cached } = await this.#fetchCached(service, key, path, log, deadline);
         return { service, value, cached, ms: Math.round(performance.now() - t0) };
       }),
     );
