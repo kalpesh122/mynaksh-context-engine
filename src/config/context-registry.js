@@ -3,6 +3,13 @@
  * how to pull it out of the upstream payload. Everything else refers to context
  * by `id`; `label` is the human string used in `sourcesUsed`. Both live on one
  * row so they cannot drift.
+ *
+ * `priority` orders context WITHIN a tier when a prompt budget forces a cut
+ * (lower = keep first). It encodes how much a datum contributes to an answer:
+ * today-specific readings before the standing birth chart, because a question
+ * about this week is answered by what is true this week. Without it, `general`
+ * — which selects everything — would truncate in declaration order and keep the
+ * chart while dropping the horoscopes.
  */
 
 /** @typedef {'user'|'kundli'|'horoscope'|'panchang'} ServiceName */
@@ -11,31 +18,37 @@ export const CONTEXT_REGISTRY = Object.freeze({
   // ---- Kundli (birth chart) -------------------------------------------------
   lagna: {
     id: 'lagna', label: 'Lagna', service: 'kundli',
+    priority: 60,
     extract: (k) => k?.lagna ?? null,
     render: (v) => `Lagna (ascendant): ${v}`,
   },
   moon_sign: {
     id: 'moon_sign', label: 'Moon Sign', service: 'kundli',
+    priority: 50,
     extract: (k) => k?.moonSign ?? null,
     render: (v) => `Moon sign: ${v}`,
   },
   current_dasha: {
     id: 'current_dasha', label: 'Current Dasha', service: 'kundli',
+    priority: 30,
     extract: (k) => k?.currentDasha ?? null,
     render: (v) => `Current dasha: ${v.mahadasha} mahadasha / ${v.antardasha} antardasha`,
   },
   house_6: {
     id: 'house_6', label: '6th House', service: 'kundli',
+    priority: 40,
     extract: (k) => k?.houses?.['6'] ?? null,
     render: (v) => `6th house (health, obstacles): lord ${v.lord}, strength ${v.strength}`,
   },
   house_7: {
     id: 'house_7', label: '7th House', service: 'kundli',
+    priority: 40,
     extract: (k) => k?.houses?.['7'] ?? null,
     render: (v) => `7th house (partnership): lord ${v.lord}, strength ${v.strength}`,
   },
   house_10: {
     id: 'house_10', label: '10th House', service: 'kundli',
+    priority: 40,
     extract: (k) => k?.houses?.['10'] ?? null,
     render: (v) => `10th house (career, status): lord ${v.lord}, strength ${v.strength}`,
   },
@@ -43,21 +56,25 @@ export const CONTEXT_REGISTRY = Object.freeze({
   // ---- Horoscope (today's reading, per life area) ---------------------------
   career_horoscope: {
     id: 'career_horoscope', label: 'Career Horoscope', service: 'horoscope',
+    priority: 10,
     extract: (h) => h?.career ?? null,
     render: (v) => `Career horoscope: ${v}`,
   },
   finance_horoscope: {
     id: 'finance_horoscope', label: 'Finance Horoscope', service: 'horoscope',
+    priority: 10,
     extract: (h) => h?.finance ?? null,
     render: (v) => `Finance horoscope: ${v}`,
   },
   health_horoscope: {
     id: 'health_horoscope', label: 'Health Horoscope', service: 'horoscope',
+    priority: 10,
     extract: (h) => h?.health ?? null,
     render: (v) => `Health horoscope: ${v}`,
   },
   relationship_horoscope: {
     id: 'relationship_horoscope', label: 'Relationship Horoscope', service: 'horoscope',
+    priority: 10,
     extract: (h) => h?.relationship ?? null,
     render: (v) => `Relationship horoscope: ${v}`,
   },
@@ -65,6 +82,7 @@ export const CONTEXT_REGISTRY = Object.freeze({
   // ---- Panchang (shared daily almanac, not per-user) ------------------------
   panchang_today: {
     id: 'panchang_today', label: "Today's Panchang", service: 'panchang',
+    priority: 20,
     extract: (p) => (p ? p : null),
     render: (v) =>
       `Today's panchang (${v.date}): tithi ${v.tithi}, nakshatra ${v.nakshatra}, yoga ${v.yoga}, karana ${v.karana}`,

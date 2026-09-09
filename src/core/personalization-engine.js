@@ -58,7 +58,7 @@ export function buildPlan({ question, user, services, failedServices = [], confi
   // ambiguous whether an override replaces or extends a nested table. Replacing
   // one nested table means supplying it whole; pick() says so if you do not.
   const merged = config ? { ...DEFAULT_CONFIG, ...config } : DEFAULT_CONFIG;
-  const { INTENTS, DEFAULT_INTENT, RESPONSE_SHAPING, ALL_CONTEXT_IDS, labelsFor } = merged;
+  const { INTENTS, DEFAULT_INTENT, RESPONSE_SHAPING, ALL_CONTEXT_IDS, labelsFor, CONTEXT_REGISTRY } = merged;
   const resolveContext = makeResolver(merged);
   const expand = (ids) => (ids === '*' ? [...ALL_CONTEXT_IDS] : [...(ids ?? [])]);
 
@@ -69,8 +69,13 @@ export function buildPlan({ question, user, services, failedServices = [], confi
 
   // No exclude-filter on primary: validateConfig() rejects that contradiction at
   // boot, so filtering here would be unreachable code masking a config error.
-  const primaryIds = expand(cfg.primary);
-  const secondaryIds = expand(cfg.secondary).filter((id) => !primaryIds.includes(id));
+  // Within a tier, order by the registry's `priority` so a budget cut drops the
+  // least useful context rather than whatever happened to be declared last.
+  const byPriority = (a, bId) =>
+    (CONTEXT_REGISTRY[a]?.priority ?? 100) - (CONTEXT_REGISTRY[bId]?.priority ?? 100);
+
+  const primaryIds = expand(cfg.primary).sort(byPriority);
+  const secondaryIds = expand(cfg.secondary).filter((id) => !primaryIds.includes(id)).sort(byPriority);
 
   const resolved = [];
   const missing = [];

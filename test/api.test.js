@@ -50,7 +50,8 @@ test('POST /personalize returns the contract the brief specifies', async () => {
   assert.equal(status, 200);
   assert.ok(typeof json.answer === 'string' && json.answer.length > 0);
   assert.ok(['HIGH', 'MEDIUM', 'LOW'].includes(json.confidence));
-  assert.deepEqual(json.sourcesUsed, ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"]);
+  assert.deepEqual([...json.sourcesUsed].sort(),
+    ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"].sort());
 });
 
 test('POST /debug/personalization does NOT invoke the LLM', async () => {

@@ -16,8 +16,27 @@ test('career question selects exactly the configured context', () => {
     user: USERS.user_101, services: services(),
   });
   assert.equal(plan.intent, 'career');
-  assert.deepEqual(plan.selectedContextLabels,
-    ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"]);
+  assert.deepEqual([...plan.selectedContextLabels].sort(),
+    ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"].sort(),
+    'content is what matters here; ordering has its own test');
+});
+
+test('context is ordered by priority within a tier, so a budget cut is principled', () => {
+  // Truncation drops from the end, so the end must be the least useful thing.
+  // Today-specific readings before the standing birth chart.
+  const plan = buildPlan({
+    question: 'What should I prioritize this week?', user: USERS.user_101, services: services(),
+  });
+  assert.equal(plan.intent, 'general');
+  const labels = plan.selectedContextLabels;
+  const idx = (l) => labels.indexOf(l);
+
+  assert.ok(idx('Career Horoscope') < idx('Lagna'),
+    "today's reading must outrank the standing chart");
+  assert.ok(idx("Today's Panchang") < idx('Moon Sign'),
+    'daily almanac must outrank a birth-chart constant');
+  assert.ok(idx('Current Dasha') < idx('10th House'),
+    'the active period must outrank a static house');
 });
 
 test('excluded context never appears in selection, even though it was fetched', () => {
@@ -125,8 +144,8 @@ test('two configurations can coexist in one process', () => {
 
   assert.equal(shipped.intent, 'career');
   assert.equal(custom.intent, 'career');
-  assert.deepEqual(shipped.selectedContextLabels,
-    ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"]);
+  assert.deepEqual([...shipped.selectedContextLabels].sort(),
+    ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"].sort());
   assert.deepEqual(custom.selectedContextLabels, ["Today's Panchang"]);
   assert.deepEqual(custom.excludedContextLabels, ['Career Horoscope']);
   assert.equal(custom.maxWords, 50, 'shaping comes from the injected config too');
