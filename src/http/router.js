@@ -27,11 +27,21 @@ async function readJsonBody(req) {
     chunks.push(chunk);
   }
   if (size === 0) return {};
+  let parsed;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
     throw new HttpError(400, 'Body must be valid JSON');
   }
+  /**
+   * `null`, `[]`, `"str"` and `7` are all valid JSON but not objects. Without
+   * this, `null` reached field validation and threw a TypeError on property
+   * access — surfacing to the caller as a 500 for what is plainly a bad request.
+   */
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new HttpError(400, 'Body must be a JSON object');
+  }
+  return parsed;
 }
 
 function sendJson(res, status, body, requestId) {
@@ -50,14 +60,36 @@ export function createRouter({ routes, logger }) {
     const log = logger.child({ requestId });
     const started = performance.now();
     const { pathname } = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
-    const key = `${req.method} ${pathname}`;
+    // HEAD is GET without a body (RFC 9110). Health checkers rely on it.
+    const method = req.method === 'HEAD' ? 'GET' : req.method;
+    const key = `${method} ${pathname}`;
     const route = routes[key];
 
     try {
-      if (!route) throw new HttpError(404, `No route for ${key}`);
-      const body = req.method === 'POST' ? await readJsonBody(req) : {};
+      if (!route) {
+        /**
+         * Distinguish "no such path" from "wrong verb on a real path". A 404
+         * for `GET /personalize` tells the caller the endpoint does not exist,
+         * which is false and sends them debugging the wrong thing.
+         */
+        const allowed = Object.keys(routes)
+          .filter((k) => k.endsWith(` ${pathname}`))
+          .map((k) => k.split(' ')[0]);
+        if (allowed.length) {
+          const err = new HttpError(405, `Method ${req.method} not allowed on ${pathname}`);
+          err.allow = [...new Set([...allowed, ...(allowed.includes('GET') ? ['HEAD'] : [])])].join(', ');
+          throw err;
+        }
+        throw new HttpError(404, `No route for ${key}`);
+      }
+      const body = method === 'POST' ? await readJsonBody(req) : {};
       const result = await route({ body, req, log });
-      sendJson(res, result.status ?? 200, result.body, requestId);
+      if (req.method === 'HEAD') {
+        res.writeHead(result.status ?? 200, { 'content-type': 'application/json', 'x-request-id': requestId });
+        res.end();
+      } else {
+        sendJson(res, result.status ?? 200, result.body, requestId);
+      }
       log.info('request.completed', {
         route: key, status: result.status ?? 200,
         latencyMs: Math.round(performance.now() - started),
@@ -66,12 +98,15 @@ export function createRouter({ routes, logger }) {
       const status = err.statusCode ?? 500;
       if (status >= 500) log.error('request.failed', { route: key, error: err.message, stack: err.stack });
       else log.warn('request.rejected', { route: key, status, error: err.message });
+      if (err.allow) res.setHeader('allow', err.allow);
       /**
        * 503 means a dependency is unavailable and the caller may retry; calling
        * that "internal_error" tells them the wrong thing about whether to.
        */
       const code = status === 503 ? 'service_unavailable'
         : status === 404 ? 'not_found'
+        : status === 405 ? 'method_not_allowed'
+        : status === 413 ? 'payload_too_large'
         : status >= 500 ? 'internal_error'
         : 'bad_request';
       sendJson(res, status, {

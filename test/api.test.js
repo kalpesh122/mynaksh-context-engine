@@ -203,3 +203,35 @@ test('malformed userId is rejected at the edge, not passed upstream', async () =
     assert.equal(status, 400, `"${bad}" should be rejected`);
   }
 });
+
+test('a JSON body that is not an object is 400, not 500', async () => {
+  // JSON.parse("null") is valid JSON but reading .userId off it threw a TypeError.
+  for (const raw of ['null', '[]', '"hello"', '7']) {
+    const res = await fetch(`${base}/personalize`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: raw,
+    });
+    assert.equal(res.status, 400, `body ${raw} should be 400`);
+  }
+});
+
+test('wrong method on a real path is 405 with an Allow header, not 404', async () => {
+  const res = await fetch(`${base}/personalize`);
+  assert.equal(res.status, 405);
+  assert.equal(res.headers.get('allow'), 'POST');
+  assert.equal((await res.json()).error, 'method_not_allowed');
+});
+
+test('HEAD works on GET routes, with no body', async () => {
+  const res = await fetch(`${base}/health`, { method: 'HEAD' });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '');
+});
+
+test('an oversized body is rejected as 413 before it is parsed', async () => {
+  const res = await fetch(`${base}/personalize`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId: 'user_101', question: 'x'.repeat(70_000) }),
+  });
+  assert.equal(res.status, 413);
+  assert.equal((await res.json()).error, 'payload_too_large');
+});

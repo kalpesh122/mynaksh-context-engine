@@ -24,7 +24,7 @@ In a second terminal:
 
 ```bash
 npm run demo       # walks all the brief's sample questions through both endpoints
-npm test           # 48 tests
+npm test           # 61 tests
 ```
 
 ### Try it by hand
@@ -76,8 +76,18 @@ the context that survived.
 |---|---|---|
 | POST | `/personalize` | Full pipeline. `{answer, confidence, sourcesUsed, meta}` |
 | POST | `/debug/personalization` | The plan only. Never calls the LLM. |
-| GET | `/health` | Liveness + active provider |
+| GET · HEAD | `/health` | Liveness + active provider |
 | GET | `/config` | Live intent/context configuration + cache stats |
+
+Status codes that carry meaning:
+
+| Code | When | Why not something else |
+|---|---|---|
+| `200` | Answered, possibly degraded (`meta.degraded`, `meta.personalized`) | Partial context still beats no answer |
+| `400` | Bad `userId`/`question`, non-object body, body > 64 KB (`413`) | — |
+| `404` | The **user service returned 404** — no such user | A 5xx from the same service degrades instead; the user exists, we just cannot read them |
+| `405` | Right path, wrong verb (sends `Allow`) | A `404` would say the endpoint does not exist, which is false |
+| `503` | **No context at all** could be retrieved, or the LLM failed | With zero grounding the model would invent a reading and bill for it |
 
 ### Using a real model
 
@@ -187,6 +197,7 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
 | Separate mock upstream process | Real HTTP exercises retries/timeouts/partial failure | Two processes to start (hidden behind `npm start`) |
 | In-memory cache with single-flight | No infrastructure; correct for a single instance; concurrent cold reads coalesce to one upstream call | Does not survive restart; not shared across instances |
 | Confidence computed pre-LLM | Debug endpoint can report it truthfully; cheap | Ignores signal the model itself might give about the answer |
+| Refuse (503) rather than answer with zero context | An ungrounded reading on career/health questions is worse than an honest failure, and is not billed for | A caller who wanted *something* gets nothing |
 
 ## What I intentionally simplified
 
@@ -214,9 +225,11 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
 2. **Bound the cache** with an LRU and a max entry count. Single-flight is
    already implemented — 30 concurrent cold requests coalesce to 4 upstream
    calls rather than 120 — but nothing caps how many distinct keys are held.
-3. **Per-service resilience policy** — individual timeouts, retry budgets and a
-   circuit breaker, so a persistently failing Kundli stops being retried on
-   every request instead of adding latency to answers that will degrade anyway.
+3. **Per-service resilience policy** — individual timeouts and a circuit
+   breaker, so a persistently failing Kundli stops being retried on every
+   request instead of adding latency to answers that will degrade anyway. There
+   is already an overall deadline across the fan-out; what is missing is
+   per-service budgets and failure memory.
 4. **A prompt-size budget with graceful truncation.** `general` currently sends
    all 11 context items; at real scale that wants a token budget that drops
    secondary context first (the plan already orders primary before secondary
@@ -247,12 +260,13 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
   currently defended against.
 - **Horizontal scaling.** In-memory cache means N instances do N times the
   upstream fetches; this wants Redis with the same per-namespace TTLs.
-- **Graceful shutdown.** No connection draining on SIGTERM.
 - **Model output validation.** The answer is returned as-is — no length
   enforcement, no check that it stayed in the requested language, no safety
   screening on guidance that touches health or finance. For an astrology product
   giving health and money guidance at 1M+ MAU, that screening is not optional.
-- **Cost/latency budgets per request.** No ceiling on total request time.
+- **Cost budgets.** The upstream fan-out has a hard deadline and the LLM call
+  has a timeout, so a request is bounded in time — but there is no *spend*
+  ceiling per user or per day.
 
 ## Layout
 
@@ -284,7 +298,7 @@ src/
     logger.js                    JSON-line structured logging
   http/
     router.js                    routing, body limits, error mapping
-test/                            48 tests
+test/                            61 tests
 ```
 
 ## Logging

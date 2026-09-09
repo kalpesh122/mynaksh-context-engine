@@ -57,10 +57,19 @@ export function buildPlan({ question, user, services, failedServices = [] }) {
   const intentCfg = INTENTS[intentId] ?? INTENTS[DEFAULT_INTENT];
 
   const excludeIds = new Set(expand(intentCfg.exclude));
-  const primaryIds = expand(intentCfg.primary).filter((id) => !excludeIds.has(id));
-  const secondaryIds = expand(intentCfg.secondary).filter(
-    (id) => !excludeIds.has(id) && !primaryIds.includes(id),
-  );
+
+  /**
+   * No exclude-filter here on purpose: validateConfig() rejects at boot any
+   * intent that lists the same id as both primary/secondary and exclude, so the
+   * overlap cannot exist by the time a request runs. Filtering it here as well
+   * would be unreachable code that quietly masks the contradiction rather than
+   * reporting it. (Confirmed by mutation testing: the filter was unkillable.)
+   *
+   * The secondary de-dupe against primary IS reachable — `general` expands to
+   * every context id, and an intent may legitimately list an id in both tiers.
+   */
+  const primaryIds = expand(intentCfg.primary);
+  const secondaryIds = expand(intentCfg.secondary).filter((id) => !primaryIds.includes(id));
 
   const resolved = [];
   const missing = [];

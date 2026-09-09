@@ -19,12 +19,31 @@ import { INTENTS } from './config/personalization.config.js';
 import { CONTEXT_REGISTRY, assertKnownContextIds } from './config/context-registry.js';
 
 /** Fail fast on a config typo rather than silently dropping context at runtime. */
-function validateConfig() {
+export function validateConfig() {
   for (const [id, cfg] of Object.entries(INTENTS)) {
     for (const field of ['primary', 'secondary', 'exclude']) {
       const ids = cfg[field];
       if (ids === '*' || ids == null) continue;
       assertKnownContextIds(ids, `INTENTS.${id}.${field}`);
+    }
+
+    /**
+     * An id that is BOTH required and forbidden is a contradiction, not
+     * something to resolve quietly at request time. Previously the engine
+     * filtered the overlap away per request, which meant a config author could
+     * write the contradiction and never find out — the context simply vanished.
+     * Surfacing it at boot is the difference between a typo you fix in a minute
+     * and one you debug in production.
+     */
+    const excluded = new Set(cfg.exclude === '*' ? [] : (cfg.exclude ?? []));
+    for (const field of ['primary', 'secondary']) {
+      const ids = cfg[field] === '*' ? [] : (cfg[field] ?? []);
+      const clash = ids.filter((x) => excluded.has(x));
+      if (clash.length) {
+        throw new Error(
+          `Config error in INTENTS.${id}: ${clash.join(', ')} listed in both ${field} and exclude`,
+        );
+      }
     }
   }
 }

@@ -86,3 +86,19 @@ test('debug view states plainly that no LLM was invoked', () => {
   const plan = buildPlan({ question: 'my health', user: USERS.user_101, services: services() });
   assert.equal(toDebugView(plan).llmInvoked, false);
 });
+
+test('a config listing an id as both primary and exclude is rejected at boot', async () => {
+  // The contradiction the engine used to swallow silently. It must be loud.
+  const { validateConfig } = await import('../src/server.js');
+  const { INTENTS } = await import('../src/config/personalization.config.js');
+
+  const original = INTENTS.career.exclude;
+  try {
+    // house_10 is career's PRIMARY context; also excluding it is nonsense.
+    Object.defineProperty(INTENTS.career, 'exclude', { value: ['house_10'], configurable: true });
+    assert.throws(() => validateConfig(), /both primary and exclude/);
+  } finally {
+    Object.defineProperty(INTENTS.career, 'exclude', { value: original, configurable: true });
+  }
+  assert.doesNotThrow(() => validateConfig(), 'real config must still be valid');
+});
