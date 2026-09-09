@@ -1,0 +1,96 @@
+#!/usr/bin/env node
+/**
+ * Application server: wiring only.
+ *
+ * Composition root — every dependency is constructed here and injected, which
+ * is what lets the tests build the same object graph with a fake fetch and a
+ * fake clock instead of reaching for module mocking.
+ */
+
+import http from 'node:http';
+import { loadConfig } from './config/app.config.js';
+import { createLogger } from './lib/logger.js';
+import { TTLCache } from './lib/cache.js';
+import { UpstreamClient } from './services/upstream-client.js';
+import { createProvider } from './llm/provider.js';
+import { PersonalizeService } from './core/personalize-service.js';
+import { createRouter, HttpError } from './http/router.js';
+import { INTENTS } from './config/personalization.config.js';
+import { CONTEXT_REGISTRY, assertKnownContextIds } from './config/context-registry.js';
+
+/** Fail fast on a config typo rather than silently dropping context at runtime. */
+function validateConfig() {
+  for (const [id, cfg] of Object.entries(INTENTS)) {
+    for (const field of ['primary', 'secondary', 'exclude']) {
+      const ids = cfg[field];
+      if (ids === '*' || ids == null) continue;
+      assertKnownContextIds(ids, `INTENTS.${id}.${field}`);
+    }
+  }
+}
+
+function requireFields(body) {
+  const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
+  const question = typeof body.question === 'string' ? body.question.trim() : '';
+  if (!userId) throw new HttpError(400, 'userId is required and must be a non-empty string');
+  if (!question) throw new HttpError(400, 'question is required and must be a non-empty string');
+  if (question.length > 2000) throw new HttpError(400, 'question must be 2000 characters or fewer');
+  return { userId, question };
+}
+
+export function buildApp(config = loadConfig(), deps = {}) {
+  validateConfig();
+
+  const logger = deps.logger ?? createLogger({ level: config.logLevel });
+  const cache = deps.cache ?? new TTLCache(config.cacheTtls);
+  const upstream = deps.upstream ?? new UpstreamClient({
+    baseUrl: config.upstreamBaseUrl,
+    timeoutMs: config.upstreamTimeoutMs,
+    retries: config.upstreamRetries,
+    cache, logger,
+    fetchImpl: deps.fetchImpl,
+  });
+  const llm = deps.llm ?? createProvider(config, logger);
+  const service = new PersonalizeService({ upstream, llm, logger });
+
+  const routes = {
+    'POST /personalize': async ({ body, log }) => ({
+      status: 200,
+      body: await service.personalize(requireFields(body), log),
+    }),
+
+    'POST /debug/personalization': async ({ body, log }) => ({
+      status: 200,
+      body: await service.debug(requireFields(body), log),
+    }),
+
+    'GET /health': async () => ({
+      status: 200,
+      body: { status: 'ok', provider: llm.name, uptimeSec: Math.round(process.uptime()) },
+    }),
+
+    /** Introspection: what intents and context exist right now, straight from config. */
+    'GET /config': async () => ({
+      status: 200,
+      body: {
+        intents: Object.fromEntries(Object.entries(INTENTS).map(([id, c]) => [id, {
+          description: c.description, primary: c.primary, secondary: c.secondary, exclude: c.exclude,
+        }])),
+        contexts: Object.fromEntries(Object.entries(CONTEXT_REGISTRY).map(([id, c]) => [id, { label: c.label, service: c.service }])),
+        cache: cache.stats(),
+      },
+    }),
+  };
+
+  return { handler: createRouter({ routes, logger }), logger, config, cache, llm, service };
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const config = loadConfig();
+  const app = buildApp(config);
+  http.createServer(app.handler).listen(config.port, () => {
+    app.logger.info('server.listening', {
+      port: config.port, provider: app.llm.name, upstream: config.upstreamBaseUrl,
+    });
+  });
+}
