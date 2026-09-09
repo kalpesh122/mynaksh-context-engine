@@ -73,14 +73,6 @@ export const CONTEXT_REGISTRY = Object.freeze({
 
 export const ALL_CONTEXT_IDS = Object.freeze(Object.keys(CONTEXT_REGISTRY));
 
-/** Context ids grouped by the upstream service that supplies them. */
-export const CONTEXT_IDS_BY_SERVICE = Object.freeze(
-  ALL_CONTEXT_IDS.reduce((acc, id) => {
-    const svc = CONTEXT_REGISTRY[id].service;
-    (acc[svc] ??= []).push(id);
-    return acc;
-  }, {}),
-);
 
 export function labelFor(id) {
   const entry = CONTEXT_REGISTRY[id];

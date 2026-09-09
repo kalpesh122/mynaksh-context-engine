@@ -68,11 +68,41 @@ its presence. It was unreachable, and it was *hiding* the contradiction rather
 than reporting it. `validateConfig()` now rejects such a config at boot and the
 filter is gone.
 
+### 4. The injection was half-done — FIXED (second pass)
+
+Making `INTENTS` injectable in the first pass left `CONTEXT_REGISTRY` imported
+at module scope. Intents *reference registry ids*, so the two are one
+configuration unit; splitting them meant an injected config naming an unknown
+context died as `TypeError: Cannot read properties of undefined (reading
+'service')` — a 500 with nothing useful in it. `validateConfig()` guards the
+shipped config at boot, but an injected one bypassed it entirely.
+
+The registry is now part of the injected bundle, the config is **shallow-merged
+over the defaults** so overriding the intents does not mean restating the
+registry, and an unknown id fails as
+`Unknown context id "saturn_transit" — not present in the context registry`.
+
+Shallow, not deep, on purpose: a deep merge makes it ambiguous whether an
+override replaces or extends a nested table. The cost is that replacing
+`RESPONSE_SHAPING` means supplying it whole — so `pick()` now names the missing
+table rather than failing as a property access on `undefined`.
+
+*A fix that leaves a system half-wired is worse than the original state, because
+the seam now looks supported.* This one only surfaced by re-reading the file
+cold rather than re-reading the notes about it.
+
+### 5. Dead exports — FIXED
+
+`toInternalView` was exported and called only by a test. Rather than delete it —
+the brief describes that exact shape — `toDebugView` is now built from it, so
+the six shared fields have one source and both are live code.
+`CONTEXT_IDS_BY_SERVICE` had no references at all and is gone.
+
 ## Left alone deliberately
 
 Knowing what not to refactor is half of this.
 
-### `buildPlan` returns a 17-field object with parallel id/label lists
+### `buildPlan` returns a wide object with parallel id/label lists
 
 `selectedContext` / `selectedContextLabels`, and the same for excluded and
 missing. That is duplication, and it must be kept in sync.

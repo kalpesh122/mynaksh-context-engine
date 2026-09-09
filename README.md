@@ -24,7 +24,7 @@ In a second terminal:
 
 ```bash
 npm run demo       # walks all the brief's sample questions through both endpoints
-npm test           # 62 tests
+npm test           # 65 tests
 ```
 
 ### Try it by hand
@@ -301,7 +301,7 @@ src/
 mocks/
   upstream-server.js             the four backend services, with fault injection
   fixtures.js                    sample users/kundlis/horoscopes
-test/                            62 tests
+test/                            65 tests
 ```
 
 ## Logging

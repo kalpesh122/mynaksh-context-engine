@@ -135,3 +135,50 @@ test('two configurations can coexist in one process', () => {
   const again = buildPlan({ question: q, user: USERS.user_101, services: services() });
   assert.deepEqual(again.selectedContextLabels, shipped.selectedContextLabels);
 });
+
+test('a partial config merges over the defaults', () => {
+  // The realistic override: new intent rules, everything else inherited.
+  const plan = buildPlan({
+    question: 'should I change my job',
+    user: USERS.user_101,
+    services: services(),
+    config: {
+      INTENTS: {
+        general: { id: 'general', match: { phrases: [], any: [], negative: [] }, primary: '*', secondary: [], exclude: [] },
+        career: { id: 'career', match: { phrases: [], strong: ['job'], any: [], negative: [] },
+                  primary: ['panchang_today'], secondary: [], exclude: [] },
+      },
+    },
+  });
+  assert.equal(plan.intent, 'career');
+  assert.deepEqual(plan.selectedContextLabels, ["Today's Panchang"], 'injected rules applied');
+  assert.equal(plan.language, 'English', 'shaping inherited from the default config');
+  assert.equal(plan.maxWords, 250, 'weights and shaping tables inherited too');
+});
+
+test('replacing a nested table wholesale reports what is missing', () => {
+  // The merge is shallow, so overriding RESPONSE_SHAPING replaces it entirely.
+  // That must say so, not fail as "cannot read properties of undefined".
+  assert.throws(() => buildPlan({
+    question: 'my health',
+    user: USERS.user_101,
+    services: services(),
+    config: { RESPONSE_SHAPING: { language: { _default: 'French' } } },
+  }), /missing RESPONSE_SHAPING\.lengthBySubscription/);
+});
+
+test('an injected config naming an unknown context id fails with a clear message', () => {
+  // Regression: this used to surface as
+  // "TypeError: Cannot read properties of undefined (reading 'service')".
+  assert.throws(() => buildPlan({
+    question: 'should I change my job',
+    user: USERS.user_101,
+    services: services(),
+    config: {
+      INTENTS: {
+        general: { id: 'general', match: { phrases: [], any: [], negative: [] }, primary: '*', secondary: [], exclude: [] },
+        career: { id: 'career', match: { phrases: [], strong: ['job'], any: [], negative: [] }, primary: ['saturn_transit'], secondary: [], exclude: [] },
+      },
+    },
+  }), /Unknown context id "saturn_transit"/);
+});

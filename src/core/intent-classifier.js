@@ -6,7 +6,7 @@
  * first. Trade-offs (English-only, misses unlisted phrasings) are in the README.
  */
 
-import * as defaultConfig from '../config/personalization.config.js';
+import * as defaultRules from '../config/personalization.config.js';
 
 const WORD = /[a-z0-9']+/g;
 
@@ -53,8 +53,9 @@ function scoreIntent(cfg, tokens, line, W) {
  *   module-level singleton.
  * @returns {{intent:string, score:number, decisive:boolean, matched:string[], scores:Record<string,number>}}
  */
-export function classify(question, config = defaultConfig) {
-  const { INTENTS, DEFAULT_INTENT, CLASSIFIER_WEIGHTS: W } = config;
+export function classify(question, config) {
+  const { INTENTS, DEFAULT_INTENT, CLASSIFIER_WEIGHTS: W } =
+    config ? { ...defaultRules, ...config } : defaultRules;
   const tokens = new Set(stemAll(question));
   const line = stemmedLine(question);
   const scores = {};

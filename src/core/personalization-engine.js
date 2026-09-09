@@ -6,30 +6,42 @@
  * INTENTS and CONTEXT_REGISTRY. Adding either is a config change.
  */
 
-import * as defaultConfig from '../config/personalization.config.js';
-import { CONTEXT_REGISTRY, ALL_CONTEXT_IDS, labelsFor } from '../config/context-registry.js';
+import * as shippedRules from '../config/personalization.config.js';
+import * as shippedRegistry from '../config/context-registry.js';
 import { classify } from './intent-classifier.js';
 import { scoreConfidence } from './confidence.js';
 
-/** '*' in config means "every registered context". */
-const expand = (ids) => (ids === '*' ? [...ALL_CONTEXT_IDS] : [...(ids ?? [])]);
-const pick = (map, key) => map[key] ?? map._default;
+/**
+ * Intents reference registry ids, so the two are ONE configuration unit.
+ * Injecting the rules without the registry they point at leaves a half-wired
+ * system: an unknown id then fails as a TypeError deep in resolution instead of
+ * a clear error at the boundary.
+ */
+const DEFAULT_CONFIG = { ...shippedRules, ...shippedRegistry };
 
-/** null when the owning service failed OR the field was absent — same thing to the answer. */
-function resolveContext(id, services) {
-  const entry = CONTEXT_REGISTRY[id];
-  const payload = services[entry.service];
-  if (payload == null) return null;
-  const value = entry.extract(payload);
-  return value == null ? null : { id, label: entry.label, value, rendered: entry.render(value) };
+function pick(map, key, what) {
+  if (!map) throw new Error(`Config is missing RESPONSE_SHAPING.${what}`);
+  return map[key] ?? map._default;
 }
 
-function shapeResponse(user, intentId, RESPONSE_SHAPING) {
-  const baseWords = pick(RESPONSE_SHAPING.lengthBySubscription, user?.subscription);
-  const multiplier = pick(RESPONSE_SHAPING.lengthMultiplierByIntent, intentId);
+function makeResolver({ CONTEXT_REGISTRY }) {
+  /** null when the owning service failed OR the field was absent — same thing to the answer. */
+  return function resolveContext(id, services) {
+    const entry = CONTEXT_REGISTRY[id];
+    if (!entry) throw new Error(`Unknown context id "${id}" — not present in the context registry`);
+    const payload = services[entry.service];
+    if (payload == null) return null;
+    const value = entry.extract(payload);
+    return value == null ? null : { id, label: entry.label, value, rendered: entry.render(value) };
+  };
+}
+
+function shapeResponse(user, intentId, shaping = {}) {
+  const baseWords = pick(shaping.lengthBySubscription, user?.subscription, 'lengthBySubscription');
+  const multiplier = pick(shaping.lengthMultiplierByIntent, intentId, 'lengthMultiplierByIntent');
   return {
-    language: pick(RESPONSE_SHAPING.language, user?.language),
-    tone: pick(RESPONSE_SHAPING.tone, user?.tonePreference),
+    language: pick(shaping.language, user?.language, 'language'),
+    tone: pick(shaping.tone, user?.tonePreference, 'tone'),
     maxWords: Math.round(baseWords * multiplier),
   };
 }
@@ -40,11 +52,20 @@ function shapeResponse(user, intentId, RESPONSE_SHAPING) {
  *   config. Injected rather than imported so the engine is composable — two
  *   configs can coexist in one process and tests need not mutate a singleton.
  */
-export function buildPlan({ question, user, services, failedServices = [], config = defaultConfig }) {
-  const { INTENTS, DEFAULT_INTENT, RESPONSE_SHAPING } = config;
-  const classification = classify(question, config);
+export function buildPlan({ question, user, services, failedServices = [], config }) {
+  // Shallow merge over the defaults: override INTENTS without restating the
+  // registry or weights. Shallow on purpose — a deep merge would make it
+  // ambiguous whether an override replaces or extends a nested table. Replacing
+  // one nested table means supplying it whole; pick() says so if you do not.
+  const merged = config ? { ...DEFAULT_CONFIG, ...config } : DEFAULT_CONFIG;
+  const { INTENTS, DEFAULT_INTENT, RESPONSE_SHAPING, ALL_CONTEXT_IDS, labelsFor } = merged;
+  const resolveContext = makeResolver(merged);
+  const expand = (ids) => (ids === '*' ? [...ALL_CONTEXT_IDS] : [...(ids ?? [])]);
+
+  const classification = classify(question, merged);
   const intentId = classification.intent;
   const cfg = INTENTS[intentId] ?? INTENTS[DEFAULT_INTENT];
+  if (!cfg) throw new Error(`Config has no intent "${intentId}" and no fallback "${DEFAULT_INTENT}"`);
 
   // No exclude-filter on primary: validateConfig() rejects that contradiction at
   // boot, so filtering here would be unreachable code masking a config error.
@@ -97,17 +118,15 @@ export const toInternalView = (plan) => ({
   excludedContext: plan.excludedContextLabels,
 });
 
-/** Richer than the internal view: auditability is this endpoint's whole job. */
+/**
+ * What /debug returns: the internal view plus everything needed to audit the
+ * decision. Built FROM the internal view so the shared fields have one source.
+ */
 export const toDebugView = (plan) => ({
-  intent: plan.intent,
+  ...toInternalView(plan),
   intentScore: plan.intentScore,
   intentDecisive: plan.intentDecisive,
   matchedTerms: plan.matchedTerms,
-  language: plan.language,
-  tone: plan.tone,
-  maxWords: plan.maxWords,
-  selectedContext: plan.selectedContextLabels,
-  excludedContext: plan.excludedContextLabels,
   missingContext: plan.missingContextLabels,
   failedServices: plan.failedServices,
   confidence: plan.confidence,
