@@ -24,7 +24,7 @@ In a second terminal:
 
 ```bash
 npm run demo       # walks all the brief's sample questions through both endpoints
-npm test           # 69 tests
+npm test           # 73 tests
 npm run eval       # scores context selection against a golden set
 ```
 
@@ -303,6 +303,7 @@ src/
   server.js                      composition root, route table, boot validation
   config/
     app.config.js                env -> frozen config
+    sources.js                   where context comes from: path + cache identity
     personalization.config.js    INTENTS, response shaping, classifier weights
     context-registry.js          context id -> label, service, extract, render
   core/
@@ -329,7 +330,7 @@ evals/
 mocks/
   upstream-server.js             the four backend services, with fault injection
   fixtures.js                    sample users/kundlis/horoscopes
-test/                            69 tests
+test/                            73 tests
 ```
 
 ## Logging

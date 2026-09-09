@@ -8,6 +8,7 @@
  */
 
 import { TTLCache } from '../lib/cache.js';
+import { UPSTREAM_SOURCES } from '../config/sources.js';
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -21,7 +22,7 @@ export class UpstreamError extends Error {
 }
 
 export class UpstreamClient {
-  constructor({ baseUrl, timeoutMs, retries, deadlineMs, cache, logger, fetchImpl = fetch }) {
+  constructor({ baseUrl, timeoutMs, retries, deadlineMs, cache, logger, fetchImpl = fetch, sources = UPSTREAM_SOURCES }) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.timeoutMs = timeoutMs;
     this.retries = retries;
@@ -30,6 +31,8 @@ export class UpstreamClient {
     this.cache = cache;
     this.logger = logger;
     this.fetchImpl = fetchImpl;
+    /** Declared, not hardcoded: adding a context source is a config change. */
+    this.sources = sources;
   }
 
   async #attempt(path, deadline) {
@@ -77,14 +80,9 @@ export class UpstreamClient {
 
   /** @returns {Promise<{services:object, failed:string[], notFound:string[], timings:object, cacheHits:string[]}>} */
   async fetchAll(userId, log = this.logger) {
-    const id = encodeURIComponent(userId);
-    const jobs = [
-      ['user', userId, `/users/${id}`],
-      ['kundli', userId, `/kundli/${id}`],
-      ['horoscope', userId, `/horoscope/${id}`],
-      // Panchang is identical for every user today: one shared cache key.
-      ['panchang', 'global', '/panchang'],
-    ];
+    const jobs = Object.entries(this.sources).map(
+      ([service, src]) => [service, src.cacheKey(userId), src.path(userId)],
+    );
 
     const started = performance.now();
     const deadline = Date.now() + this.deadlineMs;

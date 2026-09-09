@@ -66,6 +66,7 @@ export function buildApp(config = loadConfig(), deps = {}) {
     deadlineMs: config.upstreamDeadlineMs,
     cache, logger,
     fetchImpl: deps.fetchImpl,
+    sources: deps.sources,
   });
   const llm = deps.llm ?? createProvider(config, logger);
   const service = new PersonalizeService({

@@ -103,6 +103,7 @@ model, which is only possible if intent is decided before the model is involved.
 | `services/upstream-client.js` | Concurrency, timeouts, retries, partial failure, caching | cache |
 | `mocks/` | Fault-injecting fake upstreams + fixtures. Not production code, not importable from it | — |
 | `llm/*` | One `generate()` method per provider | — |
+| `config/sources.js` | Where context comes from: path and cache identity per upstream |
 | `config/*` | Product decisions as data | — |
 
 The dependency arrows point one way: `config` and `lib` know nothing about
@@ -119,9 +120,22 @@ a parameter, so an alternate mapping can run in the same process rather than
 requiring a second deployment. `GET /config` will show it
 immediately and `validateConfig()` at boot rejects typos in the ids.
 
-**A new context source (say a Saturn transit service)** — add an entry to
-`CONTEXT_REGISTRY` (id, label, service, `extract`, `render`), add the fetch to
-`UpstreamClient.fetchAll`, then reference the id from whichever intents want it.
+**A new context source (say a Saturn transit service)** — three config entries,
+no code:
+
+1. declare the service in `config/sources.js` (`path`, `cacheKey`)
+2. add a `CONTEXT_REGISTRY` entry (`id`, `label`, `service`, `priority`,
+   `extract`, `render`)
+3. reference the id from whichever intents want it
+
+`test/extensibility.test.js` does exactly this — it adds a fifth upstream
+service and gets its context into the prompt **without touching any file in
+`src/`**. The claim is executed, not asserted: if extension required a code
+change, that test could not be written.
+
+The source list used to be a hardcoded array inside `UpstreamClient.fetchAll`,
+which left a hole in the middle of the extensibility story — everything else was
+data, but *where context comes from* was code.
 
 **A new LLM provider** — implement `generate({system, user, maxWords})` and add a
 case to `createProvider`. Nothing else in the codebase sees a provider type.

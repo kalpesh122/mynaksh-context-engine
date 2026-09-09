@@ -177,6 +177,27 @@ One consequence worth stating: `sourcesUsed` reports what actually reached the
 model, not what was selected. Claiming a source the budget dropped would make
 the API response untrue.
 
+### 6. The source list was the last thing that was code — FIXED
+
+Intents, the context registry, response shaping and classifier weights were all
+data. The list of upstream services was a hardcoded array inside
+`UpstreamClient.fetchAll`, so "add a context source" meant editing the fetch
+loop. The extensibility story had a hole in the middle of it, and the
+documentation admitted it in passing ("add the fetch to UpstreamClient").
+
+`config/sources.js` now declares each service's `path(userId)` and
+`cacheKey(userId)`. Making the cache key a *function* rather than a per-user
+flag is what lets panchang key on a constant — one fetch serving every user —
+and lets a future source key on anything else without inventing a new concept.
+
+TTLs deliberately stayed in `app.config.js`: how long to trust a value is
+operational tuning that changes per environment, while path and identity are
+structural facts about the service.
+
+`test/extensibility.test.js` adds a fifth upstream service and gets its context
+into the prompt **without touching any file in `src/`**. That is the difference
+between claiming extensibility and demonstrating it.
+
 ## Where this would strain first
 
 In rough order:
