@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/main.js",
     "start:app": "node src/server.js",
-    "start:upstream": "node src/services/mock-upstream-server.js",
+    "start:upstream": "node mocks/upstream-server.js",
     "test": "node --test test/*.test.js",
     "demo": "node scripts/demo.js"
   },

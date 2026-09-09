@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan, toInternalView, toDebugView } from '../src/core/personalization-engine.js';
-import { USERS, KUNDLIS, HOROSCOPES, panchangFor } from '../src/services/fixtures.js';
+import { USERS, KUNDLIS, HOROSCOPES, panchangFor } from '../mocks/fixtures.js';
 
 const services = () => ({
   user: USERS.user_101,
@@ -88,17 +88,50 @@ test('debug view states plainly that no LLM was invoked', () => {
 });
 
 test('a config listing an id as both primary and exclude is rejected at boot', async () => {
-  // The contradiction the engine used to swallow silently. It must be loud.
   const { validateConfig } = await import('../src/server.js');
   const { INTENTS } = await import('../src/config/personalization.config.js');
 
-  const original = INTENTS.career.exclude;
-  try {
-    // house_10 is career's PRIMARY context; also excluding it is nonsense.
-    Object.defineProperty(INTENTS.career, 'exclude', { value: ['house_10'], configurable: true });
-    assert.throws(() => validateConfig(), /both primary and exclude/);
-  } finally {
-    Object.defineProperty(INTENTS.career, 'exclude', { value: original, configurable: true });
-  }
-  assert.doesNotThrow(() => validateConfig(), 'real config must still be valid');
+  // Injected, not monkey-patched. Before config was a parameter this test had to
+  // mutate a module export — the smell that showed the engine was not composable.
+  const contradictory = { ...INTENTS, career: { ...INTENTS.career, exclude: ['house_10'] } };
+  assert.throws(() => validateConfig(contradictory), /both primary and exclude/);
+  assert.doesNotThrow(() => validateConfig(), 'the shipped config must still be valid');
+});
+
+test('two configurations can coexist in one process', () => {
+  // The point of "configuration-driven": a different rule set is a different
+  // argument, not a different deployment.
+  const alternate = {
+    DEFAULT_INTENT: 'general',
+    CLASSIFIER_WEIGHTS: { phrase: 3, strong: 2, term: 1, negative: -2, minScoreForIntent: 2, decisiveMargin: 2 },
+    RESPONSE_SHAPING: {
+      language: { _default: 'English' }, tone: { _default: 'Neutral' },
+      lengthBySubscription: { _default: 50 }, lengthMultiplierByIntent: { _default: 1 },
+    },
+    INTENTS: {
+      general: { id: 'general', match: { phrases: [], any: [], negative: [] }, primary: '*', secondary: [], exclude: [] },
+      // A career intent that, unlike the shipped one, wants the panchang only.
+      career: {
+        id: 'career',
+        match: { phrases: [], strong: ['job'], any: [], negative: [] },
+        primary: ['panchang_today'], secondary: [], exclude: ['career_horoscope'],
+      },
+    },
+  };
+
+  const q = 'should I change my job';
+  const shipped = buildPlan({ question: q, user: USERS.user_101, services: services() });
+  const custom = buildPlan({ question: q, user: USERS.user_101, services: services(), config: alternate });
+
+  assert.equal(shipped.intent, 'career');
+  assert.equal(custom.intent, 'career');
+  assert.deepEqual(shipped.selectedContextLabels,
+    ['10th House', 'Career Horoscope', 'Current Dasha', "Today's Panchang"]);
+  assert.deepEqual(custom.selectedContextLabels, ["Today's Panchang"]);
+  assert.deepEqual(custom.excludedContextLabels, ['Career Horoscope']);
+  assert.equal(custom.maxWords, 50, 'shaping comes from the injected config too');
+
+  // and the shipped config is untouched by the alternate run
+  const again = buildPlan({ question: q, user: USERS.user_101, services: services() });
+  assert.deepEqual(again.selectedContextLabels, shipped.selectedContextLabels);
 });

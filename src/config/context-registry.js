@@ -1,18 +1,8 @@
 /**
- * Context Registry
- * ----------------
- * The single place where a piece of astrological context is DEFINED:
- * where it comes from, what it is called in a response, and how to pull it
- * out of the upstream payload.
- *
- * Everything else in the system refers to context by `id` only. That is what
- * lets the Personalization Engine be a data structure instead of a switch
- * statement: adding "Saturn transit" is a new entry here plus an id in a
- * config list — no engine code changes.
- *
- * `label` is the human string surfaced in `sourcesUsed`; the API contract in
- * the brief uses labels ("Career Horoscope"), while the config uses ids
- * ("career_horoscope"). Keeping both in one row stops the two drifting apart.
+ * Where each piece of context comes from, what it is called in a response, and
+ * how to pull it out of the upstream payload. Everything else refers to context
+ * by `id`; `label` is the human string used in `sourcesUsed`. Both live on one
+ * row so they cannot drift.
  */
 
 /** @typedef {'user'|'kundli'|'horoscope'|'panchang'} ServiceName */
@@ -102,11 +92,7 @@ export function labelsFor(ids) {
   return ids.map(labelFor);
 }
 
-/**
- * Validates that every id referenced by a config actually exists here.
- * Called at boot so a typo in the intent config fails fast instead of
- * silently dropping context at request time.
- */
+/** Called at boot: a typo in the intent config must fail fast, not drop context silently. */
 export function assertKnownContextIds(ids, where) {
   for (const id of ids) {
     if (!Object.hasOwn(CONTEXT_REGISTRY, id)) {

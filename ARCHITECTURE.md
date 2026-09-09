@@ -101,6 +101,7 @@ model, which is only possible if intent is decided before the model is involved.
 | `core/confidence.js` | Coverage + decisiveness → HIGH/MEDIUM/LOW | — |
 | `core/prompt-builder.js` | Plan → the exact strings sent to the model | — |
 | `services/upstream-client.js` | Concurrency, timeouts, retries, partial failure, caching | cache |
+| `mocks/` | Fault-injecting fake upstreams + fixtures. Not production code, not importable from it | — |
 | `llm/*` | One `generate()` method per provider | — |
 | `config/*` | Product decisions as data | — |
 
@@ -112,7 +113,10 @@ testable without a server and the classifier testable without a network.
 
 **A new intent (say `education`)** — add one entry to `INTENTS` in
 `personalization.config.js` with its match terms and its primary/secondary/
-exclude context ids. No engine code changes. `GET /config` will show it
+exclude context ids. No engine code changes. The config is also *injectable*:
+`classify(question, config)` and `buildPlan({ ..., config })` take a rule set as
+a parameter, so an alternate mapping can run in the same process rather than
+requiring a second deployment. `GET /config` will show it
 immediately and `validateConfig()` at boot rejects typos in the ids.
 
 **A new context source (say a Saturn transit service)** — add an entry to

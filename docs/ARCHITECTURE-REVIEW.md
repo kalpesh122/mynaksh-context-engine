@@ -1,0 +1,135 @@
+# Architectural review
+
+A structural review of this codebase, done after it worked and was tested. It
+records what holds up, what was changed as a result, and — the part that usually
+goes unwritten — what was left alone on purpose.
+
+## What holds up
+
+**The dependency graph is acyclic and one-way.**
+
+```
+config/  lib/          (know nothing about anything above them)
+   ^       ^
+core/  ────┘           (knows config and lib; knows nothing about HTTP)
+   ^
+http/  server.js       (composition root; knows everything)
+```
+
+No module in `core/` imports from `http/`. No module in `config/` or `lib/`
+imports from `core/`. That is why the engine is testable without a server and
+the classifier is testable without a network — 62 tests run in ~250ms with no
+mocking framework, because there is nothing to mock.
+
+**The debug endpoint shares the real code path.** `/debug/personalization` is
+`plan()` stopped one step early, not a parallel implementation. A debug view
+computed separately would eventually disagree with production, which is worse
+than having none. A test asserts the two agree.
+
+**One decision, one place.** Intent lives in the classifier. Confidence lives in
+`confidence.js`. Prompt wording lives in the prompt builder. Order of operations
+lives in the orchestrator and nowhere else.
+
+## Findings, and what was done
+
+### 1. The configuration was not injectable — FIXED
+
+The system was advertised as configuration-driven, and it was: you could edit
+`personalization.config.js` and behaviour changed. But `intent-classifier.js`
+and `personalization-engine.js` **imported that config at module scope**, which
+made it a process-wide singleton.
+
+Three things that cost:
+
+- Two rule sets could not coexist. A/B testing a context mapping, or a
+  per-tenant configuration, would have required a second deployment.
+- Tests could not supply a configuration. The boot-validation test had to
+  `Object.defineProperty` onto a module export to inject a contradiction — the
+  smell that exposed the problem.
+- "Configuration-driven" was true for *editing* and false for *composing*.
+
+`classify(question, config)` and `buildPlan({ ..., config })` now take the rule
+set as a parameter, defaulting to the shipped module. The composition root passes
+the default; a test passes its own. There is now a test proving two configs
+produce different context selection **in the same process**, and that using one
+does not disturb the other.
+
+### 2. Dev doubles lived in the production tree — FIXED
+
+`fixtures.js` and `mock-upstream-server.js` sat in `src/services/` beside
+`upstream-client.js`. Sample users and a fault-injecting fake server are not
+production code and should not be importable from it. Moved to `mocks/`.
+
+### 3. Unreachable defensive code masking a config error — FIXED (earlier)
+
+The engine filtered out any context id listed as both `primary` and `exclude`.
+Mutation testing showed that filter was unkillable: no test could distinguish
+its presence. It was unreachable, and it was *hiding* the contradiction rather
+than reporting it. `validateConfig()` now rejects such a config at boot and the
+filter is gone.
+
+## Left alone deliberately
+
+Knowing what not to refactor is half of this.
+
+### `buildPlan` returns a 17-field object with parallel id/label lists
+
+`selectedContext` / `selectedContextLabels`, and the same for excluded and
+missing. That is duplication, and it must be kept in sync.
+
+**Left alone because** the two representations serve genuinely different
+consumers: ids are the stable internal identity used by config and tests, labels
+are the human strings the API contract requires in `sourcesUsed`. Deriving
+labels at each call site would scatter `labelsFor()` through the codebase;
+deriving ids from labels would make labels load-bearing, which is worse — a
+copy-edit to "10th House" would silently change behaviour.
+
+The honest fix is a small `ContextSelection` value object owning both
+projections. At this size that is ceremony; past about twenty context items it
+would earn its place.
+
+### `CONTEXT_REGISTRY` carries `render`, coupling prompt wording to source definition
+
+How a context item is *phrased for the model* lives in the same row as where it
+comes from. Arguably prompt wording belongs with the prompt builder.
+
+**Left alone because** the alternative is worse: a second registry keyed by the
+same ids, which is exactly the drift the single-row design prevents. Prompt
+phrasing is a property of the datum, not of the request, and every consumer
+wants the same rendering. If per-intent phrasing were ever needed, `render`
+would take the plan — a signature change, not a restructure.
+
+### `server.js` does composition, boot validation, field validation and the route table
+
+Four responsibilities in 150 lines.
+
+**Left alone because** splitting the route table out of the composition root
+buys indirection, not clarity, at four routes. The file reads top to bottom and
+every dependency is visible in one place. At a dozen routes this stops being
+true and `http/routes.js` becomes the right call.
+
+### No schema validation library
+
+Field checks are hand-rolled in `requireFields`.
+
+**Left alone because** the input surface is two strings. A schema library would
+be the project's only runtime dependency, for validation that is currently six
+lines and fully tested. The moment the request body grows past a handful of
+fields, that trade flips.
+
+## Where this would strain first
+
+In rough order:
+
+1. **Intent recall.** The deterministic classifier is the right call for a
+   truthful debug endpoint, but it is English-only and keyword-driven. This is
+   the first thing real users would break, and the fix is designed for: a
+   low-scoring question escalates to a small model, with the result cached
+   against a normalised question hash so `/debug` stays free.
+2. **Cache is unbounded and per-instance.** Single-flight is in; an LRU bound
+   and a shared store are not. At N instances you do N times the upstream work.
+3. **`general` sends all 11 context items.** There is no prompt-size budget —
+   size is logged, not enforced. The plan already orders primary before
+   secondary precisely so truncation can degrade sensibly when it is added.
+4. **No circuit breaker.** A persistently failing service is retried on every
+   request, adding latency to answers that will degrade anyway.

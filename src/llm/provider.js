@@ -1,17 +1,9 @@
 /**
- * LLM Provider seam.
- *
- * Every provider implements one method:
+ * Provider seam. Every provider implements one method:
  *   generate({ system, user, maxWords, temperature }) -> { text, model, usage }
  *
- * Keeping the interface this narrow is what makes "swappable" true rather than
- * aspirational: the engine never sees a provider SDK type, a message array, or
- * a token parameter. Swapping OpenAI for Anthropic — or for the mock — changes
- * one env var and nothing else in the codebase.
- *
- * The mock is the DEFAULT, not a fallback. The assignment must be runnable and
- * reviewable without anyone holding an API key, so the happy path has to work
- * with zero credentials.
+ * The engine never sees a provider SDK type, so swapping one is an env var.
+ * Mock is the DEFAULT, not a fallback: the project must run with no credentials.
  */
 
 import { MockProvider } from './mock-provider.js';

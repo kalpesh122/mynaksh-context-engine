@@ -1,14 +1,8 @@
 /**
- * Deterministic mock provider.
- *
- * It is NOT a stub returning a fixed string. It composes an answer out of the
- * context it was actually given, which means a reviewer running with zero
- * credentials can still see that context selection worked — a career question
- * visibly produces a career answer, and an excluded source visibly never
- * appears. That makes the mock useful as a demo and as a test oracle.
- *
- * It deliberately does not paraphrase or add astrological judgement; inventing
- * predictions in a mock would make the output look better than the system is.
+ * Composes its reply from the context it was actually given, so a reviewer with
+ * no credentials can still see selection working — a career question visibly
+ * produces a career answer, and excluded sources visibly never appear.
+ * It does not paraphrase: a mock that invents predictions flatters the system.
  */
 
 export class MockProvider {

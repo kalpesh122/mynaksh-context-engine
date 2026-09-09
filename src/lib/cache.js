@@ -1,46 +1,22 @@
 /**
- * In-memory TTL cache.
+ * In-memory TTL cache with per-namespace expiry and single-flight.
  *
- * Per-namespace TTLs, because the four upstream services have genuinely
- * different volatility and one global TTL would be wrong for all of them:
+ * A namespace TTL is either a duration in ms, or a function (now) => absolute
+ * expiry — panchang is a daily value and must die at midnight, not after an
+ * hour, or a value cached at 23:30 is served into the next day.
  *
- *   kundli    - derived from immutable birth details. Effectively static;
- *               cached longest. Recomputing it per request is pure waste.
- *   panchang  - the same for EVERY user on a given day. Cached under a single
- *               shared key, not per user — this is the biggest single saving
- *               and the reason the cache key is per-namespace, not per-request.
- *               Its TTL is a FUNCTION, not a duration: a daily almanac must
- *               expire at midnight, not on a rolling window, or a value cached
- *               at 23:30 is served into the following day.
- *   horoscope - per user, regenerated daily.
- *   user      - per user, changes when they edit their profile; shortest TTL
- *               so preference edits (tone, language) show up quickly.
- *
- * Deliberately not LRU-bounded: see README "production concerns left out".
+ * Single-flight matters: without it, N concurrent cold reads each fire their own
+ * upstream call (measured: 30 requests -> 120 fetches instead of 4).
  */
 
 export class TTLCache {
   #store = new Map();
-  /**
-   * In-flight producers, keyed the same way as #store.
-   *
-   * Without this, N concurrent cold requests for the same key each fire their
-   * own upstream call — measured at 30 concurrent requests producing 120
-   * upstream fetches instead of 4. Coalescing them onto one promise turns a
-   * thundering herd into a single fetch that everyone awaits. This matters more
-   * as traffic grows, which is the direction this product is going.
-   */
   #inflight = new Map();
   #hits = 0;
   #misses = 0;
   #coalesced = 0;
 
-  /**
-   * @param {Record<string, number|((now:number)=>number)>} ttls
-   *   namespace -> ttl in ms, OR a function taking `now` and returning an
-   *   ABSOLUTE expiry timestamp (used for values that expire on a calendar
-   *   boundary rather than after a duration).
-   */
+  /** @param {Record<string, number|((now:number)=>number)>} ttls */
   constructor(ttls = {}, { now = () => Date.now() } = {}) {
     this.ttls = ttls;
     this.now = now;
@@ -64,17 +40,14 @@ export class TTLCache {
   set(ns, key, value) {
     const rule = this.ttls[ns] ?? this.ttls._default ?? 60_000;
     const now = this.now();
-    const expiresAt = typeof rule === 'function' ? rule(now) : now + rule;
-    this.#store.set(this.#key(ns, key), { value, expiresAt });
+    this.#store.set(this.#key(ns, key), {
+      value,
+      expiresAt: typeof rule === 'function' ? rule(now) : now + rule,
+    });
     return value;
   }
 
-  /**
-   * Fetch-through with single-flight. Returns {value, cached, coalesced}.
-   * `coalesced` means this caller joined an in-flight fetch rather than
-   * starting one — distinct from a cache hit, and worth seeing separately in
-   * the logs when diagnosing load.
-   */
+  /** @returns {Promise<{value:any, cached:boolean, coalesced:boolean}>} */
   async wrap(ns, key, producer) {
     const cached = this.get(ns, key);
     if (cached !== undefined) return { value: cached, cached: true, coalesced: false };
@@ -86,18 +59,12 @@ export class TTLCache {
       return { value: await existing, cached: false, coalesced: true };
     }
 
-    const promise = (async () => {
-      const value = await producer();
-      this.set(ns, key, value);
-      return value;
-    })();
-
+    const promise = (async () => this.set(ns, key, await producer()))();
     this.#inflight.set(k, promise);
     try {
       return { value: await promise, cached: false, coalesced: false };
     } finally {
-      // Cleared on failure too, so a failed fetch does not poison later attempts.
-      this.#inflight.delete(k);
+      this.#inflight.delete(k); // also on failure, so one error cannot wedge the key
     }
   }
 

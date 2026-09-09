@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 /**
- * Application server: wiring only.
- *
- * Composition root — every dependency is constructed here and injected, which
- * is what lets the tests build the same object graph with a fake fetch and a
- * fake clock instead of reaching for module mocking.
+ * Composition root. Every dependency is constructed here and injected, so tests
+ * build the same graph with a fake fetch and a fake clock.
  */
 
 import http from 'node:http';
@@ -19,22 +16,16 @@ import { INTENTS } from './config/personalization.config.js';
 import { CONTEXT_REGISTRY, assertKnownContextIds } from './config/context-registry.js';
 
 /** Fail fast on a config typo rather than silently dropping context at runtime. */
-export function validateConfig() {
-  for (const [id, cfg] of Object.entries(INTENTS)) {
+export function validateConfig(intents = INTENTS) {
+  for (const [id, cfg] of Object.entries(intents)) {
     for (const field of ['primary', 'secondary', 'exclude']) {
       const ids = cfg[field];
       if (ids === '*' || ids == null) continue;
       assertKnownContextIds(ids, `INTENTS.${id}.${field}`);
     }
 
-    /**
-     * An id that is BOTH required and forbidden is a contradiction, not
-     * something to resolve quietly at request time. Previously the engine
-     * filtered the overlap away per request, which meant a config author could
-     * write the contradiction and never find out — the context simply vanished.
-     * Surfacing it at boot is the difference between a typo you fix in a minute
-     * and one you debug in production.
-     */
+    // An id that is both required and forbidden is a contradiction; report it
+    // at boot rather than resolving it silently on every request.
     const excluded = new Set(cfg.exclude === '*' ? [] : (cfg.exclude ?? []));
     for (const field of ['primary', 'secondary']) {
       const ids = cfg[field] === '*' ? [] : (cfg[field] ?? []);
@@ -48,12 +39,7 @@ export function validateConfig() {
   }
 }
 
-/**
- * Ids are opaque to us, but they are interpolated into upstream paths, so the
- * shape is constrained at the edge rather than trusted. encodeURIComponent
- * already prevents traversal; this rejects the request outright so a malformed
- * id fails fast and visibly instead of becoming four upstream 404s.
- */
+/** Constrained at the edge so a malformed id fails visibly, not as four upstream 404s. */
 const USER_ID_RE = /^[A-Za-z0-9_.:@-]{1,64}$/;
 
 function requireFields(body) {
@@ -100,7 +86,7 @@ export function buildApp(config = loadConfig(), deps = {}) {
       body: { status: 'ok', provider: llm.name, uptimeSec: Math.round(process.uptime()) },
     }),
 
-    /** Introspection: what intents and context exist right now, straight from config. */
+    /** Introspection: the live intent/context config. */
     'GET /config': async () => ({
       status: 200,
       body: {
@@ -127,11 +113,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     });
   });
 
-  /**
-   * Drain in-flight requests before exiting. Without this, SIGTERM during a
-   * deploy cuts responses mid-flight and the caller sees a connection reset
-   * rather than an answer they already paid for.
-   */
+  // Drain in-flight requests: SIGTERM during a deploy should not cut responses.
   let closing = false;
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.on(signal, () => {

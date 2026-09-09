@@ -1,22 +1,15 @@
 /**
- * Personalization Configuration
- * -----------------------------
- * This file is the product surface of the engine. Adding an intent, changing
- * which context reaches the LLM, or re-tuning tone is a change HERE — never in
- * engine code. The engine treats this as data.
+ * The product surface. Adding an intent, changing which context reaches the
+ * LLM, or re-tuning tone happens HERE — the engine treats this as data.
  *
- * Contract for an intent:
- *   match.any        - terms that score toward this intent (word-boundary matched)
- *   match.phrases    - multi-word phrases, weighted higher than single terms
- *   match.negative   - terms that push AWAY from this intent (disambiguation)
- *   primary          - context REQUIRED to answer well; drives confidence
- *   secondary        - context that enriches the answer; absence is not fatal
- *   exclude          - context deliberately withheld even if available
- *
- * `exclude` is not the same as "not selected". It is an explicit statement that
- * this context would make the answer worse (bleeding relationship guidance into
- * a career answer), and it is surfaced in the debug endpoint so the decision is
- * auditable.
+ *   match.phrases  multi-word, weighted highest
+ *   match.strong   domain-unique terms that can carry a question alone
+ *   match.any      suggestive but shared across life areas; need corroboration
+ *   match.negative pushes away from this intent
+ *   primary        needed to answer well; drives confidence coverage
+ *   secondary      enriches; absence is not fatal
+ *   exclude        deliberately withheld even when available, and surfaced in
+ *                  /debug so the decision is auditable
  */
 
 export const DEFAULT_INTENT = 'general';
@@ -78,12 +71,7 @@ export const INTENTS = Object.freeze({
     exclude: ['relationship_horoscope', 'health_horoscope'],
   },
 
-  /**
-   * Fallback. "What should I prioritise this week?" / "Summarise today's
-   * guidance" are legitimately broad questions, so the engine widens rather
-   * than guessing a narrow intent and withholding the very context that
-   * mattered. `primary: '*'` expands to every registered context id.
-   */
+  /** Fallback: widens to everything rather than guessing narrow and withholding. */
   general: {
     id: 'general',
     description: 'Broad daily guidance with no single life area in focus.',
@@ -94,10 +82,7 @@ export const INTENTS = Object.freeze({
   },
 });
 
-/**
- * Response shaping. Also config, for the same reason: "premium users get longer
- * answers" is a product decision that will change without an engineer.
- */
+/** Response shaping — a product decision that will change without an engineer. */
 export const RESPONSE_SHAPING = Object.freeze({
   language: {
     // ISO code from the user profile -> the name we put in the prompt.
@@ -118,18 +103,9 @@ export const RESPONSE_SHAPING = Object.freeze({
 /** Scoring weights for intent classification. Tunable without touching logic. */
 export const CLASSIFIER_WEIGHTS = Object.freeze({
   phrase: 3,
-  /**
-   * `strong` terms are domain-unique enough to carry a question on their own
-   * ("invest", "marriage", "promotion"). `any` terms are suggestive but shared
-   * across life areas ("work", "focus", "energy") and need corroboration.
-   * Splitting them is what lets the threshold stay at 2 — high enough to reject
-   * incidental vocabulary, low enough that one decisive word is sufficient.
-   */
   strong: 2,
   term: 1,
   negative: -2,
-  /** Minimum score before we trust a specific intent over the fallback. */
-  minScoreForIntent: 2,
-  /** Score lead the winner needs over the runner-up to be considered decisive. */
-  decisiveMargin: 2,
+  minScoreForIntent: 2,  // below this, fall back to `general`
+  decisiveMargin: 2,     // lead over the runner-up needed to call it decisive
 });

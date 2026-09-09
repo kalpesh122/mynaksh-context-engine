@@ -1,18 +1,10 @@
 /**
- * Upstream Client
- * ---------------
- * Fetches the four backend services CONCURRENTLY, with a per-attempt timeout,
- * bounded retries with jittered backoff, and a cache in front of each.
+ * Fetches the four backend services concurrently, with per-attempt timeouts,
+ * bounded retries, an overall deadline, and a cache in front of each.
  *
- * Partial failure is a first-class outcome, not an exception. `fetchAll` always
- * resolves. A service that fails yields `null` and its name in `failed[]`; the
- * Personalization Engine then decides whether the answer is still worth giving
- * and the confidence score reflects what was lost. The alternative — failing
- * the whole request because Panchang was slow — would be a worse product for a
- * question that never needed Panchang.
- *
- * Retries apply only to transport errors, timeouts and 5xx. A 404 for an
- * unknown user is a real answer and retrying it just burns the budget.
+ * Partial failure is a first-class outcome: fetchAll always resolves. A failed
+ * service yields null and its name in failed[]; a 404 also lands in notFound[]
+ * because "does not exist" and "is broken" need different handling upstream.
  */
 
 import { TTLCache } from '../lib/cache.js';
@@ -29,25 +21,11 @@ export class UpstreamError extends Error {
 }
 
 export class UpstreamClient {
-  /**
-   * @param {object} opts
-   * @param {string} opts.baseUrl
-   * @param {number} opts.timeoutMs   per attempt
-   * @param {number} opts.retries     additional attempts after the first
-   * @param {TTLCache} opts.cache
-   * @param {object} opts.logger
-   * @param {typeof fetch} [opts.fetchImpl] injectable for tests
-   */
   constructor({ baseUrl, timeoutMs, retries, deadlineMs, cache, logger, fetchImpl = fetch }) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.timeoutMs = timeoutMs;
     this.retries = retries;
-    /**
-     * Ceiling on the WHOLE fan-out, not just one attempt. Without it, a service
-     * that fails slowly costs timeout x (1+retries) + backoff — ~2.5s at the
-     * defaults — and the caller has no bound at all. Retries stop once the
-     * deadline has passed, so a degraded upstream cannot hold the request open.
-     */
+    /** Ceiling on the whole fan-out, not one attempt. */
     this.deadlineMs = deadlineMs ?? timeoutMs * (retries + 1) + 500;
     this.cache = cache;
     this.logger = logger;
@@ -56,7 +34,6 @@ export class UpstreamClient {
 
   async #attempt(path, deadline) {
     const ac = new AbortController();
-    // Never wait past the overall deadline, even if the per-attempt budget is larger.
     const budget = Math.max(1, Math.min(this.timeoutMs, deadline - Date.now()));
     const timer = setTimeout(() => ac.abort(), budget);
     try {
@@ -64,6 +41,7 @@ export class UpstreamClient {
       if (!res.ok) {
         const err = new Error(`HTTP ${res.status}`);
         err.status = res.status;
+        // A 404 is an answer, not a blip — retrying it just burns the budget.
         err.retryable = RETRYABLE_STATUS.has(res.status);
         throw err;
       }
@@ -81,11 +59,8 @@ export class UpstreamClient {
       } catch (err) {
         lastErr = err;
         const retryable = err.retryable !== false; // aborts and network errors are retryable
-        const timeLeft = deadline - Date.now();
-        if (!retryable || attempt === this.retries || timeLeft <= 0) break;
-        // Full jitter backoff: 50ms, 100ms, ... randomised to avoid lock-step retries.
-        const backoff = Math.random() * 50 * 2 ** attempt;
-        await new Promise((r) => setTimeout(r, backoff));
+        if (!retryable || attempt === this.retries || deadline - Date.now() <= 0) break;
+        await new Promise((r) => setTimeout(r, Math.random() * 50 * 2 ** attempt)); // full jitter
       }
     }
     throw new UpstreamError(service, lastErr?.message ?? 'unknown', lastErr?.status);
@@ -100,16 +75,15 @@ export class UpstreamClient {
     });
   }
 
-  /**
-   * @returns {Promise<{services:Record<string,object|null>, failed:string[], notFound:string[], timings:Record<string,number>, cacheHits:string[]}>}
-   */
+  /** @returns {Promise<{services:object, failed:string[], notFound:string[], timings:object, cacheHits:string[]}>} */
   async fetchAll(userId, log = this.logger) {
+    const id = encodeURIComponent(userId);
     const jobs = [
-      ['user',      userId,   `/users/${encodeURIComponent(userId)}`],
-      ['kundli',    userId,   `/kundli/${encodeURIComponent(userId)}`],
-      ['horoscope', userId,   `/horoscope/${encodeURIComponent(userId)}`],
+      ['user', userId, `/users/${id}`],
+      ['kundli', userId, `/kundli/${id}`],
+      ['horoscope', userId, `/horoscope/${id}`],
       // Panchang is identical for every user today: one shared cache key.
-      ['panchang',  'global', `/panchang`],
+      ['panchang', 'global', '/panchang'],
     ];
 
     const started = performance.now();
@@ -124,13 +98,6 @@ export class UpstreamClient {
 
     const services = {};
     const failed = [];
-    /**
-     * Services that answered 404. Semantically different from a failure: the
-     * upstream is healthy and is telling us this record does not exist.
-     * Collapsing the two would let a typo'd userId produce a confident answer
-     * built from whatever happened to be global (see notFound handling in
-     * PersonalizeService).
-     */
     const notFound = [];
     const timings = {};
     const cacheHits = [];
@@ -150,8 +117,7 @@ export class UpstreamClient {
     });
 
     log.info('upstream.fanout', {
-      totalMs: Math.round(performance.now() - started),
-      timings, failed, notFound, cacheHits,
+      totalMs: Math.round(performance.now() - started), timings, failed, notFound, cacheHits,
     });
 
     return { services, failed, notFound, timings, cacheHits };

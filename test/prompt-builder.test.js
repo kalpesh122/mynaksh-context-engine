@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan } from '../src/core/personalization-engine.js';
 import { buildPrompt, estimateTokens } from '../src/core/prompt-builder.js';
-import { USERS, KUNDLIS, HOROSCOPES, panchangFor } from '../src/services/fixtures.js';
+import { USERS, KUNDLIS, HOROSCOPES, panchangFor } from '../mocks/fixtures.js';
 
 const services = () => ({
   user: USERS.user_101, kundli: KUNDLIS.user_101,

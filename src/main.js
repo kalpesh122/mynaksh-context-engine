@@ -54,6 +54,6 @@ function shutdown() {
 process.on('SIGINT', () => { shutdown(); process.exit(0); });
 process.on('SIGTERM', () => { shutdown(); process.exit(0); });
 
-run('services/mock-upstream-server.js', 'upstream');
+run('../mocks/upstream-server.js', 'upstream');
 await waitForPort(config.upstreamPort);
 run('server.js', 'app');

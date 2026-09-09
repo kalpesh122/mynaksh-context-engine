@@ -4,7 +4,7 @@ import http from 'node:http';
 import { buildApp } from '../src/server.js';
 import { loadConfig } from '../src/config/app.config.js';
 import { createLogger } from '../src/lib/logger.js';
-import { USERS, KUNDLIS, HOROSCOPES, panchangFor } from '../src/services/fixtures.js';
+import { USERS, KUNDLIS, HOROSCOPES, panchangFor } from '../mocks/fixtures.js';
 
 const silent = createLogger({ level: 'error', stream: { write() {} } });
 

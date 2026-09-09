@@ -24,7 +24,7 @@ In a second terminal:
 
 ```bash
 npm run demo       # walks all the brief's sample questions through both endpoints
-npm test           # 61 tests
+npm test           # 62 tests
 ```
 
 ### Try it by hand
@@ -102,7 +102,9 @@ is not a canned string — it composes its reply from the context it was actuall
 handed, so you can see selection working without paying for a completion.
 
 See `.env.example` for every knob. Architecture and extension points:
-[`ARCHITECTURE.md`](./ARCHITECTURE.md).
+[`ARCHITECTURE.md`](./ARCHITECTURE.md). A structural review — including what was
+deliberately *not* refactored and why — is in
+[`docs/ARCHITECTURE-REVIEW.md`](./docs/ARCHITECTURE-REVIEW.md).
 
 ---
 
@@ -286,8 +288,6 @@ src/
     prompt-builder.js            plan -> prompt strings
   services/
     upstream-client.js           concurrency, timeout, retry, partial failure
-    mock-upstream-server.js      the four backend services, with fault injection
-    fixtures.js                  sample users/kundlis/horoscopes
   llm/
     provider.js                  factory + the one-method interface
     mock-provider.js             default; composes from selected context
@@ -298,7 +298,10 @@ src/
     logger.js                    JSON-line structured logging
   http/
     router.js                    routing, body limits, error mapping
-test/                            61 tests
+mocks/
+  upstream-server.js             the four backend services, with fault injection
+  fixtures.js                    sample users/kundlis/horoscopes
+test/                            62 tests
 ```
 
 ## Logging
