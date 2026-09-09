@@ -24,7 +24,7 @@ In a second terminal:
 
 ```bash
 npm run demo       # walks all the brief's sample questions through both endpoints
-npm test           # 41 tests
+npm test           # 48 tests
 ```
 
 ### Try it by hand
@@ -185,7 +185,7 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
 | Config-as-JS-module, not YAML/JSON file | Comments live next to the rules, and `validateConfig()` catches typos at boot | Config changes need a restart; not editable by non-engineers |
 | Mock provider by default | Reviewable with no credentials; usable as a test oracle | Default output is not a real completion |
 | Separate mock upstream process | Real HTTP exercises retries/timeouts/partial failure | Two processes to start (hidden behind `npm start`) |
-| In-memory cache | No infrastructure; correct for a single instance | Does not survive restart; not shared across instances |
+| In-memory cache with single-flight | No infrastructure; correct for a single instance; concurrent cold reads coalesce to one upstream call | Does not survive restart; not shared across instances |
 | Confidence computed pre-LLM | Debug endpoint can report it truthfully; cheap | Ignores signal the model itself might give about the answer |
 
 ## What I intentionally simplified
@@ -211,9 +211,9 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
    path, and escalate only questions scoring below threshold to a small
    classification model — with the LLM-derived intent cached against a
    normalised question hash so `/debug` stays cheap and truthful for repeats.
-2. **Bound the cache** with an LRU and a max entry count, plus
-   single-flight/request coalescing so a cold Panchang key under load produces
-   one upstream call rather than N.
+2. **Bound the cache** with an LRU and a max entry count. Single-flight is
+   already implemented — 30 concurrent cold requests coalesce to 4 upstream
+   calls rather than 120 — but nothing caps how many distinct keys are held.
 3. **Per-service resilience policy** — individual timeouts, retry budgets and a
    circuit breaker, so a persistently failing Kundli stops being retried on
    every request instead of adding latency to answers that will degrade anyway.
@@ -235,10 +235,12 @@ withheld; `test/prompt-builder.test.js` asserts it never reaches the model.
 - **Authentication, authorization, tenancy.** No identity verification at all.
 - **Rate limiting and cost control.** Nothing stops a caller burning LLM spend;
   a real deployment needs per-user quotas and a global spend ceiling.
-- **PII handling.** Birth date, time and place are sensitive and currently flow
-  into prompts and logs unredacted. Production needs field-level redaction in
-  logs, a data-retention policy, and a decision about what may leave the network
-  boundary in a prompt at all.
+- **PII handling.** Logs are already clean — they carry ids, timings, intents and
+  sizes, never payloads, names, birth details or question text (verified by
+  grepping a live log). The gap is the **prompt**: birth-derived context leaves
+  the network boundary on every request to a third-party model. Production needs
+  a data-retention policy and an explicit decision about what may be sent to a
+  model provider at all — the current answer is "whatever the config selected".
 - **Prompt injection.** The user question is interpolated into the prompt. The
   system message instructs grounding, but there is no input sanitisation or
   output validation. A user asking the model to ignore its instructions is not
@@ -282,7 +284,7 @@ src/
     logger.js                    JSON-line structured logging
   http/
     router.js                    routing, body limits, error mapping
-test/                            41 tests
+test/                            48 tests
 ```
 
 ## Logging

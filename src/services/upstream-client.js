@@ -91,7 +91,7 @@ export class UpstreamClient {
   }
 
   /**
-   * @returns {Promise<{services:Record<string,object|null>, failed:string[], timings:Record<string,number>, cacheHits:string[]}>}
+   * @returns {Promise<{services:Record<string,object|null>, failed:string[], notFound:string[], timings:Record<string,number>, cacheHits:string[]}>}
    */
   async fetchAll(userId, log = this.logger) {
     const jobs = [
@@ -113,6 +113,14 @@ export class UpstreamClient {
 
     const services = {};
     const failed = [];
+    /**
+     * Services that answered 404. Semantically different from a failure: the
+     * upstream is healthy and is telling us this record does not exist.
+     * Collapsing the two would let a typo'd userId produce a confident answer
+     * built from whatever happened to be global (see notFound handling in
+     * PersonalizeService).
+     */
+    const notFound = [];
     const timings = {};
     const cacheHits = [];
 
@@ -125,15 +133,16 @@ export class UpstreamClient {
       } else {
         services[service] = null;
         failed.push(service);
-        log.warn('upstream.failed', { service, error: r.reason?.message });
+        if (r.reason?.status === 404) notFound.push(service);
+        log.warn('upstream.failed', { service, status: r.reason?.status ?? null, error: r.reason?.message });
       }
     });
 
     log.info('upstream.fanout', {
       totalMs: Math.round(performance.now() - started),
-      timings, failed, cacheHits,
+      timings, failed, notFound, cacheHits,
     });
 
-    return { services, failed, timings, cacheHits };
+    return { services, failed, notFound, timings, cacheHits };
   }
 }

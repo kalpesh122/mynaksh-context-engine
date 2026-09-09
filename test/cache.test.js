@@ -37,8 +37,10 @@ test('wrap reports whether the value was cached', async () => {
   const c = new TTLCache({ user: 10_000 });
   const first = await c.wrap('user', 'u1', async () => 'v');
   const second = await c.wrap('user', 'u1', async () => 'v2');
-  assert.deepEqual(first, { value: 'v', cached: false });
-  assert.deepEqual(second, { value: 'v', cached: true }, 'producer must not run on a hit');
+  assert.equal(first.value, 'v');
+  assert.equal(first.cached, false);
+  assert.equal(second.value, 'v', 'producer must not run on a hit');
+  assert.equal(second.cached, true);
 });
 
 test('stats expose hit rate for observability', async () => {
@@ -50,4 +52,44 @@ test('stats expose hit rate for observability', async () => {
   assert.equal(s.hits, 1);
   assert.equal(s.misses, 1);
   assert.equal(s.hitRate, 0.5);
+});
+
+test('a function TTL expires on a calendar boundary, not after a duration', () => {
+  // 23:30 local. A rolling 1h TTL would serve this value until 00:30 the NEXT
+  // day — yesterday's almanac presented as today's. It must die at midnight.
+  const at2330 = new Date(); at2330.setHours(23, 30, 0, 0);
+  let t = at2330.getTime();
+  const endOfDay = (now) => { const d = new Date(now); d.setHours(24, 0, 0, 0); return d.getTime(); };
+  const c = new TTLCache({ panchang: endOfDay }, { now: () => t });
+
+  c.set('panchang', 'global', { date: 'today' });
+  t += 20 * 60 * 1000;                       // 23:50, same day
+  assert.deepEqual(c.get('panchang', 'global'), { date: 'today' });
+
+  t += 20 * 60 * 1000;                       // 00:10, next day
+  assert.equal(c.get('panchang', 'global'), undefined, 'must not survive midnight');
+});
+
+test('concurrent cold reads are coalesced into a single upstream call', async () => {
+  const c = new TTLCache({ user: 10_000 });
+  let calls = 0;
+  const slow = async () => { calls++; await new Promise(r => setTimeout(r, 30)); return 'v'; };
+
+  const results = await Promise.all(Array.from({ length: 30 }, () => c.wrap('user', 'u1', slow)));
+
+  assert.equal(calls, 1, '30 concurrent cold reads must produce ONE upstream call');
+  assert.ok(results.every(r => r.value === 'v'));
+  assert.equal(results.filter(r => r.coalesced).length, 29);
+  assert.equal(c.stats().inflight, 0, 'in-flight map must drain');
+});
+
+test('a failed in-flight fetch does not poison later attempts', async () => {
+  const c = new TTLCache({ user: 10_000 });
+  let n = 0;
+  const flaky = async () => { n++; if (n === 1) throw new Error('boom'); return 'ok'; };
+
+  await assert.rejects(() => c.wrap('user', 'u1', flaky));
+  const second = await c.wrap('user', 'u1', flaky);
+  assert.equal(second.value, 'ok', 'a later call must be able to retry');
+  assert.equal(c.stats().inflight, 0);
 });

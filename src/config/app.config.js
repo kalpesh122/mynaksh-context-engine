@@ -5,6 +5,13 @@
 
 function num(v, d) { const n = Number(v); return Number.isFinite(n) ? n : d; }
 
+/** Absolute expiry at the next local midnight. */
+export function endOfLocalDay(now = Date.now()) {
+  const d = new Date(now);
+  d.setHours(24, 0, 0, 0);
+  return d.getTime();
+}
+
 export function loadConfig(env = process.env) {
   return Object.freeze({
     port: num(env.PORT, 3000),
@@ -23,13 +30,16 @@ export function loadConfig(env = process.env) {
     anthropicModel: env.ANTHROPIC_MODEL ?? 'claude-sonnet-5',
 
     /**
-     * Cache TTLs in ms, per upstream service. Rationale in lib/cache.js.
-     * Panchang expires at the end of the local day rather than on a rolling
-     * window, so everyone rolls over together instead of drifting.
+     * Cache TTLs per upstream service. Rationale in lib/cache.js.
+     *
+     * Panchang is the exception: it is a DAILY value, so its rule is a function
+     * returning midnight rather than a duration. A rolling TTL would let a
+     * value cached at 23:30 be served past midnight — i.e. yesterday's almanac
+     * presented as today's. Everyone rolls over together instead of drifting.
      */
     cacheTtls: {
       kundli: num(env.CACHE_TTL_KUNDLI_MS, 24 * 60 * 60 * 1000),
-      panchang: num(env.CACHE_TTL_PANCHANG_MS, 60 * 60 * 1000),
+      panchang: endOfLocalDay,
       horoscope: num(env.CACHE_TTL_HOROSCOPE_MS, 30 * 60 * 1000),
       user: num(env.CACHE_TTL_USER_MS, 5 * 60 * 1000),
       _default: 60_000,

@@ -125,3 +125,80 @@ test('an LLM failure degrades to 503, not a raw 500', async () => {
   assert.equal(json.details.stage, 'llm');
   s.close();
 });
+
+// --- behaviours found during adversarial review -----------------------------
+
+test('an unknown user is 404, not a confident answer built from global context', async () => {
+  // Regression: this previously returned 200 with an answer grounded only in
+  // Panchang (which is the same for everyone), i.e. a plausible reading for an
+  // id the caller invented.
+  const notFound = async (url) => {
+    if (url.endsWith('/panchang')) return { ok: true, status: 200, json: async () => panchangFor(new Date()) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const app = buildApp(loadConfig({ LOG_LEVEL: 'error', UPSTREAM_RETRIES: '0' }),
+    { logger: silent, llm: new CountingProvider(), fetchImpl: notFound });
+  const s = http.createServer(app.handler);
+  await new Promise((r) => s.listen(0, r));
+
+  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId: 'ghost_999', question: 'my career' }),
+  });
+  assert.equal(res.status, 404);
+  const json = await res.json();
+  assert.equal(json.error, 'not_found');
+  s.close();
+});
+
+test('a user service that is DOWN still degrades to an answer (not a 404)', async () => {
+  // The distinction that makes the 404 above safe: 5xx means the user exists
+  // and we cannot read them; 404 means they do not exist.
+  const userDown = async (url) => {
+    if (url.includes('/users/')) return { ok: false, status: 503, json: async () => ({}) };
+    if (url.includes('/kundli/')) return { ok: true, status: 200, json: async () => KUNDLIS.user_101 };
+    if (url.includes('/horoscope/')) return { ok: true, status: 200, json: async () => HOROSCOPES.user_101 };
+    return { ok: true, status: 200, json: async () => panchangFor(new Date()) };
+  };
+  const app = buildApp(loadConfig({ LOG_LEVEL: 'error', UPSTREAM_RETRIES: '0' }),
+    { logger: silent, llm: new CountingProvider(), fetchImpl: userDown });
+  const s = http.createServer(app.handler);
+  await new Promise((r) => s.listen(0, r));
+
+  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId: 'user_101', question: 'Should I change my job?' }),
+  });
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.meta.personalized, false, 'must report that shaping fell back to defaults');
+  assert.ok(json.sourcesUsed.length > 0);
+  s.close();
+});
+
+test('zero grounding refuses with 503 and never calls the model', async () => {
+  const allDown = async () => ({ ok: false, status: 503, json: async () => ({}) });
+  const llm2 = new CountingProvider();
+  const app = buildApp(loadConfig({ LOG_LEVEL: 'error', UPSTREAM_RETRIES: '0' }),
+    { logger: silent, llm: llm2, fetchImpl: allDown });
+  const s = http.createServer(app.handler);
+  await new Promise((r) => s.listen(0, r));
+
+  const res = await fetch(`http://127.0.0.1:${s.address().port}/personalize`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userId: 'user_101', question: 'my career' }),
+  });
+  assert.equal(res.status, 503);
+  const json = await res.json();
+  assert.equal(json.error, 'service_unavailable', '503 must not be labelled internal_error');
+  assert.equal(json.details.llmInvoked, false);
+  assert.equal(llm2.calls, 0, 'must not pay for an ungrounded completion');
+  s.close();
+});
+
+test('malformed userId is rejected at the edge, not passed upstream', async () => {
+  for (const bad of ['../../etc/passwd', 'a b', 'x'.repeat(65), 'drop;table']) {
+    const { status } = await post('/personalize', { userId: bad, question: 'my job' });
+    assert.equal(status, 400, `"${bad}" should be rejected`);
+  }
+});

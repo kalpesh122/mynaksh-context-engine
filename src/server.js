@@ -29,10 +29,21 @@ function validateConfig() {
   }
 }
 
+/**
+ * Ids are opaque to us, but they are interpolated into upstream paths, so the
+ * shape is constrained at the edge rather than trusted. encodeURIComponent
+ * already prevents traversal; this rejects the request outright so a malformed
+ * id fails fast and visibly instead of becoming four upstream 404s.
+ */
+const USER_ID_RE = /^[A-Za-z0-9_.:@-]{1,64}$/;
+
 function requireFields(body) {
   const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
   const question = typeof body.question === 'string' ? body.question.trim() : '';
   if (!userId) throw new HttpError(400, 'userId is required and must be a non-empty string');
+  if (!USER_ID_RE.test(userId)) {
+    throw new HttpError(400, 'userId must be 1-64 chars of letters, digits, or _ . : @ -');
+  }
   if (!question) throw new HttpError(400, 'question is required and must be a non-empty string');
   if (question.length > 2000) throw new HttpError(400, 'question must be 2000 characters or fewer');
   return { userId, question };

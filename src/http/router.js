@@ -66,8 +66,16 @@ export function createRouter({ routes, logger }) {
       const status = err.statusCode ?? 500;
       if (status >= 500) log.error('request.failed', { route: key, error: err.message, stack: err.stack });
       else log.warn('request.rejected', { route: key, status, error: err.message });
+      /**
+       * 503 means a dependency is unavailable and the caller may retry; calling
+       * that "internal_error" tells them the wrong thing about whether to.
+       */
+      const code = status === 503 ? 'service_unavailable'
+        : status === 404 ? 'not_found'
+        : status >= 500 ? 'internal_error'
+        : 'bad_request';
       sendJson(res, status, {
-        error: status >= 500 ? 'internal_error' : 'bad_request',
+        error: code,
         message: err.message,
         ...(err.details ? { details: err.details } : {}),
         requestId,

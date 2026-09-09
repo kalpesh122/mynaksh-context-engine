@@ -23,9 +23,26 @@ export class PersonalizeService {
 
   /** Everything up to (but not including) the LLM call. */
   async plan({ userId, question }, log) {
-    const { services, failed, timings, cacheHits } = await this.upstream.fetchAll(userId, log);
+    const { services, failed, notFound, timings, cacheHits } = await this.upstream.fetchAll(userId, log);
+
+    /**
+     * If the user service says 404, this user does not exist. Answering anyway
+     * from whatever context is global (panchang is the same for everyone) would
+     * hand a caller a plausible-looking reading for an id they made up. That is
+     * a correctness bug, not graceful degradation, so it is a 404.
+     *
+     * A user service that is DOWN (5xx/timeout) is different and still degrades:
+     * the user exists, we just cannot read their preferences right now.
+     */
+    if (notFound.includes('user')) {
+      const err = new Error(`No such user: ${userId}`);
+      err.statusCode = 404;
+      err.details = { stage: 'upstream', service: 'user' };
+      throw err;
+    }
+
     const plan = buildPlan({ question, user: services.user, services, failedServices: failed });
-    return { plan, services, failed, timings, cacheHits };
+    return { plan, services, failed, notFound, timings, cacheHits };
   }
 
   async debug(input, log) {
@@ -40,6 +57,28 @@ export class PersonalizeService {
 
   async personalize(input, log) {
     const { plan, services } = await this.plan(input, log);
+
+    /**
+     * Zero resolved context means there is nothing to ground an answer in.
+     * Calling the model here would buy a fluent, confident, entirely invented
+     * reading — and bill for it. For a product giving people guidance about
+     * their careers and health, an ungrounded answer is worse than an honest
+     * failure, so this refuses instead of degrading.
+     *
+     * Note this is strictly "we got NOTHING". Partial context still answers,
+     * with confidence lowered to match — that path is exercised by the
+     * kundli-down case in the tests.
+     */
+    if (plan.selectedContext.length === 0) {
+      log.error('context.empty', {
+        intent: plan.intent, failedServices: plan.failedServices,
+      });
+      const err = new Error('Guidance is unavailable right now: no astrological context could be retrieved.');
+      err.statusCode = 503;
+      err.details = { stage: 'context', failedServices: plan.failedServices, llmInvoked: false };
+      throw err;
+    }
+
     const prompt = buildPrompt({ question: input.question, plan, user: services.user });
 
     log.info('prompt.built', {
@@ -76,6 +115,13 @@ export class PersonalizeService {
         intent: plan.intent,
         coverage: plan.coverage,
         degraded: plan.failedServices.length > 0,
+        /**
+         * `confidence` is about GROUNDING (did we get the astrological context).
+         * This is a separate axis: whether the answer was shaped to this user at
+         * all. If the user service is down we still answer, well-grounded, but
+         * in default language/tone/length — and the caller deserves to know.
+         */
+        personalized: services.user != null,
         failedServices: plan.failedServices,
         provider: this.llm.name,
         model: completion.model,
